@@ -13,7 +13,6 @@
  * title: Stromnutzung
  * period: day           # day | week | month  (default: day)
  * unit: kWh             # display unit        (default: kWh)
- * chart_height: 250     # chart height px     (default: 250)
  * entities:
  *   - entity: sensor.energy_building_a
  *     name: Gebäude 441 Gesamt
@@ -106,12 +105,16 @@
       color: #fff;
     }
     .chart-wrapper {
+      flex: 1;
       position: relative;
       padding: 0 12px 4px;
+      min-height: 150px;
+      overflow: hidden;
     }
     canvas {
+      position: absolute;
+      inset: 0;
       display: block;
-      width: 100%;
     }
     .loading-overlay {
       position: absolute;
@@ -227,7 +230,6 @@
         title: config.title || 'Energy Usage',
         unit: config.unit || 'kWh',
         period: config.period || 'day',
-        chart_height: Number(config.chart_height) || 250,
         refresh_interval: Number(config.refresh_interval) || 300, // seconds
         entities: config.entities.map((e, idx) => {
           if (typeof e === 'string') {
@@ -302,7 +304,7 @@
 
     _render() {
       if (!this._config) return;
-      const { title, entities, chart_height } = this._config;
+      const { title, entities } = this._config;
 
       this.shadowRoot.innerHTML = `
         <style>${CARD_STYLES}</style>
@@ -321,7 +323,7 @@
             <button class="period-btn ${this._period === 'month' ? 'active' : ''}" data-period="month">Monat</button>
           </div>
 
-          <div class="chart-wrapper" id="chart-wrapper" style="height:${chart_height}px">
+          <div class="chart-wrapper" id="chart-wrapper">
             <div class="loading-overlay" id="loading">Daten werden geladen\u2026</div>
             <canvas id="chart-canvas" style="visibility:hidden"></canvas>
             <div class="tooltip-box" id="tooltip"></div>
@@ -481,19 +483,20 @@
     // ── Canvas drawing ────────────────────────────────────────────────────────
 
     _drawChart() {
-      const canvas = this.shadowRoot?.getElementById('chart-canvas');
-      if (!canvas || !this._data) return;
+      const canvas  = this.shadowRoot?.getElementById('chart-canvas');
+      const wrapper = this.shadowRoot?.getElementById('chart-wrapper');
+      if (!canvas || !wrapper || !this._data) return;
 
       const dpr = window.devicePixelRatio || 1;
-      // Width: read actual rendered width (CSS width:100% already applied).
-      // Height: fixed from config — never derived from layout, no feedback loop.
-      const W = Math.round(canvas.getBoundingClientRect().width) || canvas.parentElement.clientWidth || 300;
-      const H = Math.max(this._config.chart_height, 150);
+      // Canvas is position:absolute filling the wrapper via CSS inset:0.
+      // Reading wrapper dimensions is safe — canvas is out of normal flow
+      // so it cannot influence wrapper height → no feedback loop.
+      const W = Math.max(wrapper.clientWidth,  1);
+      const H = Math.max(wrapper.clientHeight, 1);
 
       canvas.width  = W * dpr;
       canvas.height = H * dpr;
-      // Only set height in style; width is handled by CSS width:100%
-      canvas.style.height = H + 'px';
+      // No style.width / style.height — CSS handles display size.
 
       const ctx = canvas.getContext('2d');
       ctx.scale(dpr, dpr);
@@ -978,14 +981,12 @@
           { value: 'week',  label: 'Woche (t\u00e4glich)'  },
           { value: 'month', label: 'Monat (t\u00e4glich)'  },
         ]}}},
-        { name: 'chart_height',     selector: { number: { min: 100, max: 800,  step: 10, mode: 'box' } } },
         { name: 'refresh_interval', selector: { number: { min: 60,  max: 3600, step: 60, mode: 'box' } } },
       ];
       form.computeLabel = s => ({
         title:            'Titel',
         unit:             'Einheit',
         period:           'Standard-Zeitraum',
-        chart_height:     'Diagramm-H\u00f6he (px)',
         refresh_interval: 'Aktualisierungsintervall (s)',
       }[s.name] || s.name);
       this._syncGeneralForm();
@@ -1018,7 +1019,6 @@
         title:            this._config.title            ?? '',
         unit:             this._config.unit             ?? 'kWh',
         period:           this._config.period           ?? 'day',
-        chart_height:     this._config.chart_height     ?? 250,
         refresh_interval: this._config.refresh_interval ?? 300,
       };
     }
