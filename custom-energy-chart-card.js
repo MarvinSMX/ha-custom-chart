@@ -107,7 +107,6 @@
     .chart-wrapper {
       flex: 1;
       position: relative;
-      padding: 0 12px 4px;
       min-height: 150px;
       overflow: hidden;
     }
@@ -133,7 +132,7 @@
       display: flex;
       flex-wrap: wrap;
       gap: 5px 14px;
-      padding: 4px 16px 14px;
+      padding: 4px 16px 8px;
       justify-content: center;
     }
     .legend-item {
