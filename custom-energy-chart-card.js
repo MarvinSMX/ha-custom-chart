@@ -237,8 +237,16 @@
       }
 
       if (firstSet) {
-        this._subscribeEnergyCollection();
         this._startRefreshTimer();
+        // Try to subscribe; if the energy collection isn't ready yet,
+        // fall back to today/hourly and keep retrying on every hass update.
+        if (!this._subscribeEnergyCollection()) {
+          this._fetchData();
+        }
+      } else if (!this._unsubEnergy) {
+        // Retry subscription on every hass update until the energy-date-selection
+        // card has created the shared energy collection.
+        this._subscribeEnergyCollection();
       }
     }
 
@@ -318,28 +326,27 @@
 
     // ── Energy collection subscription (native HA period selector) ────────────
 
+    // Returns true if subscription was established, false if collection not yet available.
     _subscribeEnergyCollection() {
-      if (this._unsubEnergy) { this._unsubEnergy(); this._unsubEnergy = null; }
-
       const collection = this._hass?.connection?._energy;
-      if (!collection) {
-        // No energy dashboard configured — fall back to today/hourly
-        this._fetchData();
-        return;
-      }
+      if (!collection) return false;
+
+      // Tear down any previous subscription before re-subscribing
+      if (this._unsubEnergy) { this._unsubEnergy(); this._unsubEnergy = null; }
 
       // subscribe() calls back immediately if collection already has state
       let firedImmediately = false;
       this._unsubEnergy = collection.subscribe(state => {
         firedImmediately = true;
         if (!state) return;
-        this._energyStart = state.start  ? new Date(state.start) : null;
-        this._energyEnd   = state.end    ? new Date(state.end)   : null;
+        this._energyStart = state.start ? new Date(state.start) : null;
+        this._energyEnd   = state.end   ? new Date(state.end)   : null;
         this._fetchData();
       });
 
-      // If the collection has no state yet, fetch with fallback now
+      // Collection exists but has no state yet — fetch with fallback range
       if (!firedImmediately) this._fetchData();
+      return true;
     }
 
     // ── Refresh timer ─────────────────────────────────────────────────────────
