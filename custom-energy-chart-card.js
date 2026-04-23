@@ -281,6 +281,10 @@
       return 4;
     }
 
+    static getConfigElement() {
+      return document.createElement('custom-energy-chart-card-editor');
+    }
+
     static getStubConfig() {
       return {
         title: 'Stromnutzung',
