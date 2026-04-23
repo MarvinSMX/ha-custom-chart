@@ -756,7 +756,430 @@
     }
   }
 
+  // ─── Visual Editor ──────────────────────────────────────────────────────────
+
+  const EDITOR_STYLES = `
+    :host { display: block; }
+    .editor {
+      padding: 8px 16px 16px;
+      display: flex;
+      flex-direction: column;
+    }
+    .section-title {
+      font-size: 0.78em;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--secondary-text-color);
+      padding: 16px 0 6px;
+      border-bottom: 1px solid var(--divider-color, rgba(0,0,0,0.12));
+      margin-bottom: 10px;
+    }
+    .entity-row {
+      border: 1px solid var(--divider-color, rgba(0,0,0,0.12));
+      border-radius: var(--ha-card-border-radius, 12px);
+      margin-bottom: 8px;
+      overflow: hidden;
+    }
+    .entity-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      cursor: pointer;
+      user-select: none;
+      background: var(--secondary-background-color, rgba(0,0,0,0.03));
+    }
+    .entity-header:hover {
+      background: rgba(var(--rgb-primary-text-color,33,33,33), 0.05);
+    }
+    .color-dot {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      border: 1px solid rgba(0,0,0,0.15);
+    }
+    .entity-label {
+      flex: 1;
+      font-size: 0.9em;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: var(--primary-text-color);
+    }
+    .row-actions { display: flex; gap: 2px; flex-shrink: 0; }
+    .icon-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 28px;
+      border: none;
+      border-radius: 50%;
+      background: none;
+      color: var(--secondary-text-color);
+      cursor: pointer;
+      padding: 0;
+      transition: background 0.15s, color 0.15s;
+    }
+    .icon-btn:hover { background: rgba(var(--rgb-primary-text-color,33,33,33),0.08); color: var(--primary-text-color); }
+    .icon-btn.delete:hover { background: rgba(var(--rgb-error-color,219,68,55),0.1); color: var(--error-color,#db4437); }
+    .icon-btn.disabled-btn { opacity: 0.3; pointer-events: none; }
+    .entity-form {
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      border-top: 1px solid var(--divider-color);
+    }
+    .entity-form.hidden { display: none; }
+    ha-entity-picker, ha-textfield { display: block; width: 100%; }
+    .field-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .field-row label {
+      font-size: 0.85em;
+      color: var(--secondary-text-color);
+      min-width: 68px;
+      flex-shrink: 0;
+    }
+    .color-preview {
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      border: 2px solid var(--divider-color);
+      flex-shrink: 0;
+      overflow: hidden;
+      padding: 0;
+      cursor: pointer;
+      position: relative;
+    }
+    .color-preview input[type=color] {
+      position: absolute;
+      inset: -4px;
+      width: calc(100% + 8px);
+      height: calc(100% + 8px);
+      opacity: 0;
+      cursor: pointer;
+    }
+    .color-text {
+      font-size: 0.82em;
+      font-family: monospace;
+      color: var(--secondary-text-color);
+    }
+    .native-select {
+      flex: 1;
+      padding: 8px 10px;
+      border: 1px solid var(--divider-color, rgba(0,0,0,0.2));
+      border-radius: 6px;
+      background: var(--card-background-color, #fff);
+      color: var(--primary-text-color);
+      font-family: inherit;
+      font-size: 0.88em;
+      cursor: pointer;
+      outline: none;
+    }
+    .native-select:focus {
+      border-color: var(--primary-color);
+      box-shadow: 0 0 0 1px var(--primary-color);
+    }
+    .add-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      width: 100%;
+      padding: 11px;
+      margin-top: 4px;
+      border: 2px dashed var(--divider-color, rgba(0,0,0,0.15));
+      border-radius: var(--ha-card-border-radius, 12px);
+      background: none;
+      color: var(--primary-color, #009ac7);
+      cursor: pointer;
+      font-size: 0.9em;
+      font-family: inherit;
+      font-weight: 500;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .add-btn:hover {
+      background: rgba(var(--rgb-primary-color,0,154,199), 0.07);
+      border-color: var(--primary-color);
+    }
+  `;
+
+  class CustomEnergyChartCardEditor extends HTMLElement {
+    constructor() {
+      super();
+      this.attachShadow({ mode: 'open' });
+      this._config      = {};
+      this._hass        = null;
+      this._expandedIdx = null;
+      this._initialized = false;
+    }
+
+    setConfig(config) {
+      this._config = JSON.parse(JSON.stringify(config));
+      if (!Array.isArray(this._config.entities)) this._config.entities = [];
+      if (this._initialized) {
+        this._syncGeneralForm();
+        this._renderEntityList();
+      } else {
+        this._renderFull();
+        this._initialized = true;
+      }
+    }
+
+    set hass(hass) {
+      this._hass = hass;
+      this.shadowRoot.querySelectorAll('ha-entity-picker').forEach(p => { p.hass = hass; });
+      const f = this.shadowRoot.getElementById('general-form');
+      if (f) f.hass = hass;
+    }
+
+    _fire() {
+      this.dispatchEvent(new CustomEvent('config-changed', {
+        detail: { config: this._config },
+        bubbles: true,
+        composed: true,
+      }));
+    }
+
+    // Called once on first setConfig
+    _renderFull() {
+      this.shadowRoot.innerHTML = `
+        <style>${EDITOR_STYLES}</style>
+        <div class="editor">
+          <div class="section-title">Allgemein</div>
+          <ha-form id="general-form"></ha-form>
+          <div class="section-title">Entit\u00e4ten</div>
+          <div id="entity-list"></div>
+          <button class="add-btn" id="add-btn">
+            <ha-icon icon="mdi:plus-circle-outline"></ha-icon>
+            Entit\u00e4t hinzuf\u00fcgen
+          </button>
+        </div>
+      `;
+
+      // Wire up ha-form (properties must be set imperatively, not as HTML attributes)
+      const form = this.shadowRoot.getElementById('general-form');
+      form.hass   = this._hass;
+      form.schema = [
+        { name: 'title',            selector: { text: {} } },
+        { name: 'unit',             selector: { text: {} } },
+        { name: 'period',           selector: { select: { options: [
+          { value: 'day',   label: 'Tag (st\u00fcndlich)'  },
+          { value: 'week',  label: 'Woche (t\u00e4glich)'  },
+          { value: 'month', label: 'Monat (t\u00e4glich)'  },
+        ]}}},
+        { name: 'chart_height',     selector: { number: { min: 100, max: 800,  step: 10, mode: 'box' } } },
+        { name: 'refresh_interval', selector: { number: { min: 60,  max: 3600, step: 60, mode: 'box' } } },
+      ];
+      form.computeLabel = s => ({
+        title:            'Titel',
+        unit:             'Einheit',
+        period:           'Standard-Zeitraum',
+        chart_height:     'Diagramm-H\u00f6he (px)',
+        refresh_interval: 'Aktualisierungsintervall (s)',
+      }[s.name] || s.name);
+      this._syncGeneralForm();
+
+      form.addEventListener('value-changed', ev => {
+        Object.assign(this._config, ev.detail.value);
+        this._fire();
+      });
+
+      this.shadowRoot.getElementById('add-btn').addEventListener('click', () => {
+        const len = this._config.entities.length;
+        this._config.entities.push({
+          statistic_id: '',
+          name: '',
+          color: DEFAULT_COLORS[len % DEFAULT_COLORS.length],
+          stat_type: 'change',
+        });
+        this._expandedIdx = len;
+        this._renderEntityList();
+        this._fire();
+      });
+
+      this._renderEntityList();
+    }
+
+    _syncGeneralForm() {
+      const f = this.shadowRoot.getElementById('general-form');
+      if (!f) return;
+      f.data = {
+        title:            this._config.title            ?? '',
+        unit:             this._config.unit             ?? 'kWh',
+        period:           this._config.period           ?? 'day',
+        chart_height:     this._config.chart_height     ?? 250,
+        refresh_interval: this._config.refresh_interval ?? 300,
+      };
+    }
+
+    // Re-renders only the entity list (general form stays intact)
+    _renderEntityList() {
+      const list = this.shadowRoot?.getElementById('entity-list');
+      if (!list) return;
+      const entities = this._config.entities;
+
+      list.innerHTML = entities.map((e, i) => this._entityHtml(e, i)).join('');
+
+      // ha-entity-picker needs hass set as a property
+      list.querySelectorAll('ha-entity-picker').forEach(picker => {
+        if (this._hass) picker.hass = this._hass;
+        const i = +picker.dataset.i;
+        picker.value = entities[i].statistic_id || '';
+        picker.addEventListener('value-changed', ev => {
+          entities[i].statistic_id = ev.detail.value || '';
+          // Auto-fill name if field is still empty
+          if (!entities[i].name && this._hass?.states[ev.detail.value]) {
+            entities[i].name = this._hass.states[ev.detail.value].attributes.friendly_name || ev.detail.value;
+            const tf = list.querySelector(`ha-textfield[data-i="${i}"]`);
+            if (tf) tf.value = entities[i].name;
+          }
+          this._fire();
+        });
+      });
+
+      // ha-textfield value must also be set as property
+      list.querySelectorAll('ha-textfield[data-i]').forEach(tf => {
+        const i = +tf.dataset.i;
+        tf.value = entities[i].name || '';
+        tf.addEventListener('change', ev => {
+          entities[i].name = ev.target.value;
+          const lbl = list.querySelector(`.entity-label[data-i="${i}"]`);
+          if (lbl) lbl.textContent = ev.target.value || entities[i].statistic_id || `Entit\u00e4t ${i + 1}`;
+          this._fire();
+        });
+      });
+
+      // Color pickers
+      list.querySelectorAll('input[type=color]').forEach(inp => {
+        const i = +inp.dataset.i;
+        inp.addEventListener('input', ev => {
+          const c = ev.target.value;
+          entities[i].color = c;
+          list.querySelector(`.color-dot[data-i="${i}"]`).style.background    = c;
+          list.querySelector(`.color-preview[data-i="${i}"]`).style.background = c;
+          list.querySelector(`.color-text[data-i="${i}"]`).textContent         = c;
+          this._fire();
+        });
+      });
+
+      // Stat-type selects
+      list.querySelectorAll('select[data-i]').forEach(sel => {
+        const i = +sel.dataset.i;
+        sel.addEventListener('change', ev => {
+          entities[i].stat_type = ev.target.value;
+          this._fire();
+        });
+      });
+
+      // Header expand/collapse
+      list.querySelectorAll('.entity-header').forEach(hdr => {
+        hdr.addEventListener('click', ev => {
+          if (ev.target.closest('.icon-btn')) return;
+          const i = +hdr.dataset.i;
+          this._expandedIdx = this._expandedIdx === i ? null : i;
+          this._renderEntityList();
+        });
+      });
+
+      // Delete
+      list.querySelectorAll('.icon-btn.delete').forEach(btn => {
+        btn.addEventListener('click', ev => {
+          ev.stopPropagation();
+          const i = +btn.dataset.i;
+          entities.splice(i, 1);
+          if (this._expandedIdx === i)       this._expandedIdx = null;
+          else if (this._expandedIdx > i)    this._expandedIdx--;
+          this._renderEntityList();
+          this._fire();
+        });
+      });
+
+      // Move up
+      list.querySelectorAll('.icon-btn.up').forEach(btn => {
+        btn.addEventListener('click', ev => {
+          ev.stopPropagation();
+          const i = +btn.dataset.i;
+          if (i === 0) return;
+          [entities[i - 1], entities[i]] = [entities[i], entities[i - 1]];
+          if (this._expandedIdx === i)     this._expandedIdx = i - 1;
+          else if (this._expandedIdx === i - 1) this._expandedIdx = i;
+          this._renderEntityList();
+          this._fire();
+        });
+      });
+
+      // Move down
+      list.querySelectorAll('.icon-btn.down').forEach(btn => {
+        btn.addEventListener('click', ev => {
+          ev.stopPropagation();
+          const i = +btn.dataset.i;
+          if (i >= entities.length - 1) return;
+          [entities[i], entities[i + 1]] = [entities[i + 1], entities[i]];
+          if (this._expandedIdx === i)     this._expandedIdx = i + 1;
+          else if (this._expandedIdx === i + 1) this._expandedIdx = i;
+          this._renderEntityList();
+          this._fire();
+        });
+      });
+    }
+
+    _entityHtml(e, i) {
+      const n     = this._config.entities.length;
+      const exp   = this._expandedIdx === i;
+      const name  = this._esc(e.name || e.statistic_id || `Entit\u00e4t ${i + 1}`);
+      const color = e.color || DEFAULT_COLORS[i % DEFAULT_COLORS.length];
+      const stype = e.stat_type || 'change';
+
+      return `
+        <div class="entity-row">
+          <div class="entity-header" data-i="${i}">
+            <div class="color-dot" data-i="${i}" style="background:${color}"></div>
+            <span class="entity-label" data-i="${i}">${name}</span>
+            <div class="row-actions">
+              <button class="icon-btn up${i === 0     ? ' disabled-btn' : ''}" data-i="${i}" title="Nach oben"><ha-icon icon="mdi:chevron-up"></ha-icon></button>
+              <button class="icon-btn down${i === n-1 ? ' disabled-btn' : ''}" data-i="${i}" title="Nach unten"><ha-icon icon="mdi:chevron-down"></ha-icon></button>
+              <button class="icon-btn delete" data-i="${i}" title="Entfernen"><ha-icon icon="mdi:delete-outline"></ha-icon></button>
+            </div>
+          </div>
+          <div class="entity-form${exp ? '' : ' hidden'}">
+            <ha-entity-picker data-i="${i}" label="Entit\u00e4t / Statistik-ID" include-statistics allow-custom-entity></ha-entity-picker>
+            <ha-textfield data-i="${i}" label="Anzeigename"></ha-textfield>
+            <div class="field-row">
+              <label>Farbe</label>
+              <div class="color-preview" data-i="${i}" style="background:${color}">
+                <input type="color" data-i="${i}" value="${color}">
+              </div>
+              <span class="color-text" data-i="${i}">${color}</span>
+            </div>
+            <div class="field-row">
+              <label>Statistik-Typ</label>
+              <select class="native-select" data-i="${i}">
+                <option value="change"${stype === 'change' ? ' selected' : ''}>Wert\u00e4nderung (change) \u2013 Energiez\u00e4hler</option>
+                <option value="mean"${stype === 'mean' ? ' selected' : ''}>Mittelwert (mean) \u2013 Leistungssensor</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    _esc(s) {
+      return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+  }
+
   // ─── Registration ───────────────────────────────────────────────────────────
+
+  if (!customElements.get('custom-energy-chart-card-editor')) {
+    customElements.define('custom-energy-chart-card-editor', CustomEnergyChartCardEditor);
+  }
 
   if (!customElements.get('custom-energy-chart-card')) {
     customElements.define('custom-energy-chart-card', CustomEnergyChartCard);
