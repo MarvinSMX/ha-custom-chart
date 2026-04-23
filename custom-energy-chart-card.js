@@ -1,9 +1,10 @@
 /**
  * Custom Energy Chart Card
- * Version: 1.0.0
+ * Version: 1.1.0
  *
  * HACS-compatible Lovelace card for displaying energy consumption charts,
  * similar to the native Home Assistant Energy Dashboard.
+ * Uses Apache ECharts for native HA-style charts.
  *
  * Repository: https://github.com/YOUR_USER/custom-energy-chart-card
  *
@@ -29,13 +30,29 @@
 (function () {
   'use strict';
 
-  const VERSION = '1.0.0';
+  const VERSION = '1.1.0';
 
   const DEFAULT_COLORS = [
     '#488fc2', '#7dbff5', '#ff9800', '#4db6ac',
     '#f06292', '#8353d1', '#43a047', '#e53935',
     '#fb8c00', '#00acc1', '#ab47bc', '#26a69a',
   ];
+
+  // ─── ECharts loader ────────────────────────────────────────────────────────
+
+  let _echartsPromise = null;
+  function loadEcharts() {
+    if (_echartsPromise) return _echartsPromise;
+    _echartsPromise = new Promise((resolve, reject) => {
+      if (window.echarts) { resolve(window.echarts); return; }
+      const script = document.createElement('script');
+      script.src = 'https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js';
+      script.onload  = () => resolve(window.echarts);
+      script.onerror = () => reject(new Error('Failed to load ECharts from CDN'));
+      document.head.appendChild(script);
+    });
+    return _echartsPromise;
+  }
 
   // ─── Styles ────────────────────────────────────────────────────────────────
 
@@ -87,12 +104,10 @@
       position: relative;
       min-height: 150px;
       overflow: hidden;
-      cursor: default;
     }
-    canvas {
+    #echarts-container {
       position: absolute;
       inset: 0;
-      display: block;
     }
     .loading-overlay {
       position: absolute;
@@ -103,6 +118,7 @@
       color: var(--secondary-text-color);
       font-size: 0.85em;
       font-family: var(--ha-font-family-body, Roboto, sans-serif);
+      z-index: 10;
     }
     .loading-overlay.error {
       color: var(--error-color, #db4437);
@@ -127,50 +143,6 @@
       border-radius: 50%;
       flex-shrink: 0;
     }
-    /* Tooltip — matches ECharts native tooltip exactly */
-    .tooltip-box {
-      position: absolute;
-      background: rgb(28, 28, 28);
-      border: 1px solid rgba(225, 225, 225, 0.12);
-      border-radius: 4px;
-      padding: 10px;
-      font: 12px/1.5 var(--ha-font-family-body, Roboto, Noto, sans-serif);
-      color: rgb(225, 225, 225);
-      pointer-events: none;
-      box-shadow: 1px 2px 10px rgba(0, 0, 0, 0.2);
-      z-index: 100;
-      white-space: nowrap;
-      opacity: 0;
-      transition: opacity 0.1s;
-    }
-    .tooltip-box.visible { opacity: 1; }
-    .tooltip-title {
-      font-weight: 700;
-      margin-bottom: 6px;
-      text-align: center;
-    }
-    .tooltip-row {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      margin: 2px 0;
-    }
-    .tooltip-dot {
-      width: 10px;
-      height: 10px;
-      border-radius: 50%;
-      flex-shrink: 0;
-      display: inline-block;
-      margin-right: 4px;
-    }
-    .tooltip-label { flex: 1; }
-    .tooltip-value { font-weight: 400; margin-left: 8px; }
-    .tooltip-total {
-      margin-top: 6px;
-      padding-top: 5px;
-      border-top: 1px solid rgba(225, 225, 225, 0.15);
-      font-weight: 700;
-    }
   `;
 
   // ─── Main Card Element ──────────────────────────────────────────────────────
@@ -187,7 +159,8 @@
       this._unsubEnergy = null;
       this._loading = false;
       this._rendered = false;
-      this._barHitAreas = [];
+      this._chart = null;
+      this._resizeObserver = null;
       this._refreshTimer = null;
     }
 
@@ -263,6 +236,11 @@
         this._unsubEnergy();
         this._unsubEnergy = null;
       }
+      this._stopResizeObserver();
+      if (this._chart) {
+        this._chart.dispose();
+        this._chart = null;
+      }
     }
 
     getCardSize() {
@@ -304,8 +282,7 @@
 
           <div class="chart-wrapper" id="chart-wrapper">
             <div class="loading-overlay" id="loading">Daten werden geladen\u2026</div>
-            <canvas id="chart-canvas" style="visibility:hidden"></canvas>
-            <div class="tooltip-box" id="tooltip"></div>
+            <div id="echarts-container"></div>
           </div>
 
           <div class="legend">
@@ -319,13 +296,12 @@
         </ha-card>
       `;
 
-      // Canvas hover events
-      const canvas = this.shadowRoot.getElementById('chart-canvas');
-      canvas.addEventListener('mousemove', e => this._onMouseMove(e));
-      canvas.addEventListener('mouseleave', () => this._hideTooltip());
-      canvas.addEventListener('touchstart', e => {
-        if (e.touches.length) this._onMouseMove(e.touches[0]);
-      }, { passive: true });
+      // Dispose any previous chart instance (e.g. after config change re-render)
+      if (this._chart) {
+        this._chart.dispose();
+        this._chart = null;
+      }
+      this._stopResizeObserver();
     }
 
     // ── Energy collection subscription (native HA period selector) ────────────
@@ -560,7 +536,7 @@
 
       this._data = { slots, datasets, statPeriod };
       this._setLoadingState('done');
-      this._drawChart();
+      this._renderEcharts();
     }
 
     _buildTimeSlots(start, end, period) {
@@ -581,23 +557,22 @@
       return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
     }
 
-    // ── Canvas drawing ────────────────────────────────────────────────────────
+    // ── ECharts rendering ─────────────────────────────────────────────────────
 
-    _drawChart() {
-      const canvas  = this.shadowRoot?.getElementById('chart-canvas');
-      const wrapper = this.shadowRoot?.getElementById('chart-wrapper');
-      if (!canvas || !wrapper || !this._data) return;
+    async _renderEcharts() {
+      if (!this._data) return;
 
-      const dpr = window.devicePixelRatio || 1;
-      const W = Math.max(wrapper.clientWidth,  1);
-      const H = Math.max(wrapper.clientHeight, 1);
+      let echarts;
+      try {
+        echarts = await loadEcharts();
+      } catch (err) {
+        console.error('[custom-energy-chart-card] ECharts load failed:', err);
+        this._setLoadingState('error', 'ECharts konnte nicht geladen werden');
+        return;
+      }
 
-      canvas.width  = W * dpr;
-      canvas.height = H * dpr;
-
-      const ctx = canvas.getContext('2d');
-      ctx.scale(dpr, dpr);
-      ctx.clearRect(0, 0, W, H);
+      const container = this.shadowRoot?.getElementById('echarts-container');
+      if (!container) return;
 
       // Resolve CSS theme tokens
       const cs = getComputedStyle(this.shadowRoot.host || document.documentElement);
@@ -605,143 +580,127 @@
       const gridColor  = cs.getPropertyValue('--divider-color').trim()        || 'rgba(0,0,0,0.12)';
       const fontFamily = cs.getPropertyValue('--ha-font-family-body').trim()  || 'Roboto, sans-serif';
 
-      // No rotated Y-unit label — padding matches ECharts grid layout
-      const PAD = { top: 12, right: 12, bottom: 36, left: 46 };
-      const cW = W - PAD.left - PAD.right;
-      const cH = H - PAD.top  - PAD.bottom;
-
       const { slots, datasets, statPeriod } = this._data;
-      const n = slots.length;
-      if (!n || cW <= 0 || cH <= 0) return;
+      const unit = this._config.unit;
 
-      const totals = slots.map((_, i) =>
-        datasets.reduce((s, ds) => s + (ds.values[i] || 0), 0)
-      );
-      const maxVal = Math.max(...totals, 0.001);
-      const yMax   = this._niceMax(maxVal);
-      const yTick  = this._niceTick(yMax);
+      // X-axis category labels
+      const xLabels = slots.map(slot => this._slotLabel(slot, statPeriod));
 
-      // ── Y-axis grid lines (ECharts style: solid, thin) ────────────────────
-      ctx.setLineDash([]);
-      ctx.lineWidth = 1;
-      ctx.font = `11px ${fontFamily}`;
-      ctx.textBaseline = 'middle';
-      ctx.textAlign = 'right';
+      // Stacked bar series — one per entity
+      const series = datasets.map(ds => ({
+        name: ds.name,
+        type: 'bar',
+        stack: 'total',
+        barMaxWidth: 50,
+        itemStyle: {
+          color: this._hexToRgba(ds.color, 0.7),
+          borderRadius: [2, 2, 0, 0],
+        },
+        emphasis: {
+          itemStyle: { color: this._hexToRgba(ds.color, 1) },
+          focus: 'series',
+        },
+        data: ds.values,
+      }));
 
-      for (let v = 0; v <= yMax + yTick * 0.01; v += yTick) {
-        const y = PAD.top + cH - (v / yMax) * cH;
-        if (y < PAD.top - 2) break;
+      // Tooltip formatter — native HA dark-panel style
+      const fmtValue = v => this._fmtValue(v);
+      const esc      = s => this._escHtml(s);
 
-        // Solid grid line — same style as ECharts splitLine
-        ctx.strokeStyle = gridColor;
-        ctx.beginPath();
-        ctx.moveTo(PAD.left, y);
-        ctx.lineTo(PAD.left + cW, y);
-        ctx.stroke();
+      const option = {
+        backgroundColor: 'transparent',
+        animation: false,
+        textStyle: { fontFamily, fontSize: 11, color: secColor },
+        grid: { left: 46, right: 12, top: 12, bottom: 36, containLabel: false },
+        xAxis: {
+          type: 'category',
+          data: xLabels,
+          axisLine: { show: false },
+          axisTick: { show: false },
+          axisLabel: { color: secColor, fontSize: 11, fontFamily },
+          splitLine: { show: true, lineStyle: { color: gridColor, width: 1 } },
+        },
+        yAxis: {
+          type: 'value',
+          axisLine: { show: false },
+          axisTick: { show: false },
+          axisLabel: {
+            color: secColor,
+            fontSize: 11,
+            fontFamily,
+            formatter: v => this._fmtAxis(v),
+          },
+          splitLine: { show: true, lineStyle: { color: gridColor, width: 1 } },
+        },
+        tooltip: {
+          trigger: 'axis',
+          axisPointer: { type: 'shadow' },
+          backgroundColor: 'rgb(28, 28, 28)',
+          borderColor: 'rgba(225, 225, 225, 0.12)',
+          borderWidth: 1,
+          padding: 10,
+          textStyle: { color: 'rgb(225, 225, 225)', fontSize: 12, fontFamily },
+          formatter: params => {
+            if (!params || !params.length) return '';
+            const slot  = slots[params[0].dataIndex];
+            let title;
+            if (statPeriod === 'hour') {
+              const h = slot.getHours();
+              title = `${h}:00\u2013${h + 1}:00`;
+            } else {
+              title = slot.toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long' });
+            }
+            const slotTotal = params.reduce((s, p) => s + (Number(p.value) || 0), 0);
+            let html = `<div style="font-weight:700;margin-bottom:6px;text-align:center">${esc(title)}</div>`;
+            params.forEach(p => {
+              const val = Number(p.value) || 0;
+              if (val <= 0) return;
+              html += `<div style="display:flex;align-items:center;gap:6px;margin:2px 0">` +
+                `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;` +
+                `background:${p.color};flex-shrink:0"></span>` +
+                `<span style="flex:1">${esc(p.seriesName)}:</span>` +
+                `<strong style="margin-left:8px">${fmtValue(val)} ${esc(unit)}</strong>` +
+                `</div>`;
+            });
+            if (datasets.length > 1 && slotTotal > 0) {
+              html += `<div style="margin-top:6px;padding-top:5px;border-top:1px solid rgba(225,225,225,0.15);font-weight:700">` +
+                `${fmtValue(slotTotal)} ${esc(unit)} Gesamtverbrauch</div>`;
+            }
+            return html;
+          },
+        },
+        series,
+      };
 
-        // Y label (value only, no unit)
-        ctx.fillStyle = secColor;
-        ctx.fillText(this._fmtAxis(v), PAD.left - 6, y);
+      // Initialize or reuse chart instance
+      if (!this._chart) {
+        this._chart = echarts.init(container, null, { renderer: 'canvas' });
+        this._startResizeObserver();
       }
+      this._chart.setOption(option, /* notMerge= */ true);
+    }
 
-      // ── X-axis split lines (vertical grid — ECharts category axis splitLine) ──
-      const slotW = cW / n;
-      ctx.strokeStyle = gridColor;
-      ctx.lineWidth = 1;
-      for (let i = 0; i <= n; i++) {
-        const x = PAD.left + i * slotW;
-        ctx.beginPath();
-        ctx.moveTo(x, PAD.top);
-        ctx.lineTo(x, PAD.top + cH);
-        ctx.stroke();
-      }
-
-      // ── Bar columns ───────────────────────────────────────────────────────
-      // ECharts-like width: 60% of slot, capped at 28px for readability
-      const barW  = Math.min(Math.max(2, slotW * 0.6), 28);
-      const barOX = (slotW - barW) / 2; // offset within slot to centre the bar
-
-      // Pre-compute the topmost non-zero dataset index per slot
-      // (only the topmost segment gets rounded top corners, matching ECharts)
-      const topIdx = slots.map((_, i) => {
-        let last = -1;
-        datasets.forEach((ds, di) => { if ((ds.values[i] || 0) > 0) last = di; });
-        return last;
+    _startResizeObserver() {
+      const wrapper = this.shadowRoot?.getElementById('chart-wrapper');
+      if (!wrapper || this._resizeObserver) return;
+      this._resizeObserver = new ResizeObserver(() => {
+        this._chart?.resize();
       });
-
-      this._barHitAreas = slots.map((slot, i) => {
-        const bx = PAD.left + i * slotW + barOX;
-        let stackH = 0;
-        const segData = {};
-
-        datasets.forEach((ds, di) => {
-          const val = Math.max(0, ds.values[i] || 0);
-          segData[ds.statistic_id] = val;
-          if (val <= 0) return;
-
-          const bh = (val / yMax) * cH;
-          const by = PAD.top + cH - stackH - bh;
-
-          ctx.fillStyle = ds.color + '80'; // 50% opacity — matches native ECharts bar style
-          ctx.beginPath();
-
-          if (di === topIdx[i] && bh >= 2) {
-            // Topmost segment: rounded top-left + top-right corners (ECharts default)
-            const r = Math.min(barW / 3, 4);
-            ctx.moveTo(bx + r,         by);
-            ctx.lineTo(bx + barW - r,  by);
-            ctx.arcTo(bx + barW, by,   bx + barW, by + r, r);
-            ctx.lineTo(bx + barW,      by + bh);
-            ctx.lineTo(bx,             by + bh);
-            ctx.lineTo(bx,             by + r);
-            ctx.arcTo(bx,       by,    bx + r,     by,     r);
-            ctx.closePath();
-          } else {
-            ctx.rect(bx, by, barW, bh);
-          }
-          ctx.fill();
-          stackH += bh;
-        });
-
-        // X-axis label — skip when too dense, always show first and last
-        const labelStep = n <= 12 ? 1 : n <= 24 ? 2 : Math.ceil(n / 12);
-        if (i % labelStep === 0 || i === n - 1) {
-          ctx.fillStyle = secColor;
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'top';
-          ctx.font = `11px ${fontFamily}`;
-          ctx.fillText(
-            this._slotLabel(slot, statPeriod),
-            PAD.left + (i + 0.5) * slotW,
-            PAD.top + cH + 6
-          );
-        }
-
-        return {
-          xStart: PAD.left + i * slotW,
-          xEnd:   PAD.left + (i + 1) * slotW,
-          slot, segData,
-          total: totals[i],
-        };
-      });
+      this._resizeObserver.observe(wrapper);
     }
 
-    // ── Axis helpers ──────────────────────────────────────────────────────────
-
-    _niceMax(val) {
-      if (val <= 0) return 1;
-      const exp = Math.floor(Math.log10(val));
-      const mag = Math.pow(10, exp);
-      return Math.ceil((val * 1.12) / mag) * mag;
+    _stopResizeObserver() {
+      this._resizeObserver?.disconnect();
+      this._resizeObserver = null;
     }
 
-    _niceTick(max) {
-      const rough = max / 5;
-      const exp = Math.floor(Math.log10(rough));
-      const mag = Math.pow(10, exp);
-      const f   = rough / mag;
-      return (f < 1.5 ? 1 : f < 3 ? 2 : f < 7 ? 5 : 10) * mag;
+    _hexToRgba(hex, alpha) {
+      const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex || '');
+      if (!m) return `rgba(72,143,194,${alpha})`;
+      return `rgba(${parseInt(m[1], 16)},${parseInt(m[2], 16)},${parseInt(m[3], 16)},${alpha})`;
     }
+
+    // ── Axis / label helpers ──────────────────────────────────────────────────
 
     _slotLabel(date, statPeriod) {
       if (statPeriod === 'hour') {
@@ -767,100 +726,24 @@
     // ── Loading state ─────────────────────────────────────────────────────────
 
     _setLoadingState(state, message) {
-      const loading = this.shadowRoot?.getElementById('loading');
-      const canvas  = this.shadowRoot?.getElementById('chart-canvas');
+      const loading   = this.shadowRoot?.getElementById('loading');
+      const container = this.shadowRoot?.getElementById('echarts-container');
       if (!loading) return;
 
       if (state === 'loading') {
         loading.className = 'loading-overlay';
         loading.style.display = 'flex';
         loading.textContent = message || 'Daten werden geladen\u2026';
-        if (canvas) canvas.style.visibility = 'hidden';
+        if (container) container.style.visibility = 'hidden';
       } else if (state === 'error') {
         loading.className = 'loading-overlay error';
         loading.style.display = 'flex';
         loading.textContent = message || 'Fehler beim Laden der Daten';
-        if (canvas) canvas.style.visibility = 'hidden';
+        if (container) container.style.visibility = 'hidden';
       } else {
         loading.style.display = 'none';
-        if (canvas) canvas.style.visibility = 'visible';
+        if (container) container.style.visibility = 'visible';
       }
-    }
-
-    // ── Tooltip ───────────────────────────────────────────────────────────────
-
-    _onMouseMove(e) {
-      if (!this._barHitAreas?.length) return;
-      const canvas = this.shadowRoot.getElementById('chart-canvas');
-      const rect   = canvas.getBoundingClientRect();
-      const x      = (e.clientX ?? e.pageX) - rect.left;
-
-      const hit = this._barHitAreas.find(b => x >= b.xStart && x < b.xEnd);
-      if (hit && hit.total > 0) {
-        this._showTooltip(e, hit);
-      } else {
-        this._hideTooltip();
-      }
-    }
-
-    _showTooltip(e, hit) {
-      const tooltip = this.shadowRoot?.getElementById('tooltip');
-      const canvas  = this.shadowRoot?.getElementById('chart-canvas');
-      if (!tooltip || !canvas) return;
-      const wrapper = canvas.parentElement;
-
-      const statPeriod = this._data?.statPeriod || 'hour';
-      let title;
-      if (statPeriod === 'hour') {
-        const h = hit.slot.getHours();
-        title = `${h}:00 \u2013 ${h + 1}:00`;
-      } else {
-        title = hit.slot.toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long' });
-      }
-      let html = `<div class="tooltip-title">${this._escHtml(title)}</div>`;
-
-      this._config.entities.forEach(entity => {
-        const val = hit.segData[entity.statistic_id] || 0;
-        html += `
-          <div class="tooltip-row">
-            <div class="tooltip-dot" style="background:${this._escHtml(entity.color)}"></div>
-            <span class="tooltip-label">${this._escHtml(entity.name)}:</span>
-            <strong class="tooltip-value">${this._fmtValue(val)} ${this._escHtml(this._config.unit)}</strong>
-          </div>`;
-      });
-
-      if (this._config.entities.length > 1) {
-        html += `
-          <div class="tooltip-total">
-            <b>${this._fmtValue(hit.total)} ${this._escHtml(this._config.unit)} Gesamtverbrauch</b>
-          </div>`;
-      }
-
-      tooltip.innerHTML = html;
-      tooltip.classList.add('visible');
-
-      // Position tooltip, staying in bounds
-      requestAnimationFrame(() => {
-        const wRect = wrapper.getBoundingClientRect();
-        const cx    = (e.clientX ?? e.pageX) - wRect.left;
-        const cy    = (e.clientY ?? e.pageY) - wRect.top;
-        const tw    = tooltip.offsetWidth;
-        const th    = tooltip.offsetHeight;
-
-        let left = cx + 14;
-        let top  = cy - th / 2;
-
-        if (left + tw > wRect.width - 4) left = cx - tw - 14;
-        if (top < 4)                      top  = 4;
-        if (top + th > wRect.height - 4)  top  = wRect.height - th - 4;
-
-        tooltip.style.left = left + 'px';
-        tooltip.style.top  = top  + 'px';
-      });
-    }
-
-    _hideTooltip() {
-      this.shadowRoot?.getElementById('tooltip')?.classList.remove('visible');
     }
 
     // ── Unit category mapping ─────────────────────────────────────────────────
@@ -1279,4 +1162,5 @@
       preview:     true,
     });
   }
+
 })();
