@@ -341,13 +341,17 @@
       // If not found at _energy, scan all connection keys for an energy-like collection
       // (handles cases where the property key has changed in newer HA versions)
       if (!collection) {
+        // Scan all connection properties for an energy collection object.
+        // HA energy cards use getEnergyDataCollection(hass, key) where key defaults
+        // to "_energy" but can be customized (e.g. "_energy_energie-heizung").
+        // Identify it by having both subscribe() and refresh() methods.
         for (const key of Object.keys(conn)) {
           const candidate = conn[key];
           if (
             candidate &&
             typeof candidate === 'object' &&
             typeof candidate.subscribe === 'function' &&
-            candidate.state && typeof candidate.state.start !== 'undefined'
+            typeof candidate.refresh === 'function'
           ) {
             console.log(`[custom-energy-chart-card] found energy collection at hass.connection.${key}`);
             collection = candidate;
@@ -511,12 +515,16 @@
           if (entity.stat_type === 'mean') {
             value = s.mean ?? 0;
           } else {
-            // Prefer explicit 'change' field (available for state_class: total_increasing / total).
-            // Fall back to sum difference for integrations that omit 'change' but provide 'sum'.
+            // Prefer explicit 'change' field (state_class: total_increasing / total).
+            // Fall back to sum difference when 'change' is absent but 'sum' exists.
+            // Last resort: consecutive mean difference — handles state_class: measurement
+            // sensors (e.g. OilFox usage counter) that HA only tracks as mean.
             if (s.change != null) {
               value = s.change;
             } else if (s.sum != null && idx > 0 && sorted[idx - 1]?.sum != null) {
               value = s.sum - sorted[idx - 1].sum;
+            } else if (s.mean != null && idx > 0 && sorted[idx - 1]?.mean != null) {
+              value = s.mean - sorted[idx - 1].mean;
             } else {
               value = 0;
             }
