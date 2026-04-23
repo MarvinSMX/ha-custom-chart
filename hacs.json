@@ -1,0 +1,6 @@
+{
+  "name": "Custom Energy Chart Card",
+  "render_readme": true,
+  "filename": "custom-energy-chart-card.js",
+  "homeassistant": "2022.11.0"
+}

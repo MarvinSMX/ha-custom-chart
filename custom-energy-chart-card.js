@@ -1,0 +1,798 @@
+/**
+ * Custom Energy Chart Card
+ * Version: 1.0.0
+ *
+ * HACS-compatible Lovelace card for displaying energy consumption charts,
+ * similar to the native Home Assistant Energy Dashboard.
+ *
+ * Repository: https://github.com/YOUR_USER/custom-energy-chart-card
+ *
+ * Card YAML configuration:
+ * ─────────────────────────
+ * type: custom:custom-energy-chart-card
+ * title: Stromnutzung
+ * period: day           # day | week | month  (default: day)
+ * unit: kWh             # display unit        (default: kWh)
+ * chart_height: 250     # chart height px     (default: 250)
+ * entities:
+ *   - entity: sensor.energy_building_a
+ *     name: Gebäude 441 Gesamt
+ *     color: "#7dbff5"
+ *   - entity: sensor.energy_building_b
+ *     name: Gebäude 439 Gesamt
+ *     color: "#488fc2"
+ *   - entity: sensor.pv_self_consumption
+ *     name: PV-Eigenverbrauch
+ *     color: "#ff9800"
+ *     stat_type: change   # change | mean  (default: change)
+ */
+
+(function () {
+  'use strict';
+
+  const VERSION = '1.0.0';
+
+  const DEFAULT_COLORS = [
+    '#488fc2', '#7dbff5', '#ff9800', '#4db6ac',
+    '#f06292', '#8353d1', '#43a047', '#e53935',
+    '#fb8c00', '#00acc1', '#ab47bc', '#26a69a',
+  ];
+
+  // ─── Styles ────────────────────────────────────────────────────────────────
+
+  const CARD_STYLES = `
+    :host {
+      display: block;
+    }
+    ha-card {
+      overflow: hidden;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      box-sizing: border-box;
+    }
+    .card-header {
+      padding: 12px 16px 6px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .card-title {
+      font-size: 1.1em;
+      font-weight: 500;
+      color: var(--primary-text-color);
+      flex: 1;
+    }
+    .total-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 12px;
+      background: rgba(var(--rgb-primary-text-color, 33,33,33), 0.06);
+      border-radius: 16px;
+      font-size: 0.8em;
+      color: var(--secondary-text-color);
+      white-space: nowrap;
+    }
+    .total-chip .chip-icon {
+      font-size: 1em;
+    }
+    .period-controls {
+      display: flex;
+      gap: 4px;
+      padding: 2px 16px 8px;
+    }
+    .period-btn {
+      padding: 3px 12px;
+      border: 1px solid var(--divider-color, rgba(0,0,0,0.12));
+      border-radius: 12px;
+      background: transparent;
+      color: var(--secondary-text-color);
+      cursor: pointer;
+      font-size: 0.75em;
+      font-family: var(--ha-font-family-body, Roboto, sans-serif);
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
+      outline: none;
+      user-select: none;
+    }
+    .period-btn:hover:not(.active) {
+      background: rgba(var(--rgb-primary-text-color, 33,33,33), 0.06);
+    }
+    .period-btn.active {
+      background: var(--primary-color, #009ac7);
+      border-color: var(--primary-color, #009ac7);
+      color: #fff;
+    }
+    .chart-wrapper {
+      flex: 1;
+      position: relative;
+      padding: 0 12px 4px;
+      min-height: 150px;
+    }
+    canvas {
+      display: block;
+    }
+    .loading-overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--secondary-text-color);
+      font-size: 0.85em;
+      font-family: var(--ha-font-family-body, Roboto, sans-serif);
+    }
+    .loading-overlay.error {
+      color: var(--error-color, #db4437);
+    }
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px 14px;
+      padding: 4px 16px 14px;
+      justify-content: center;
+    }
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 0.78em;
+      color: var(--secondary-text-color);
+    }
+    .legend-swatch {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .tooltip-box {
+      position: absolute;
+      background: var(--card-background-color, rgba(28,28,28,0.97));
+      border: 1px solid var(--divider-color, rgba(225,225,225,0.12));
+      border-radius: 6px;
+      padding: 8px 12px;
+      font-size: 0.78em;
+      color: var(--primary-text-color);
+      pointer-events: none;
+      box-shadow: 0 3px 12px rgba(0,0,0,0.25);
+      z-index: 100;
+      white-space: nowrap;
+      opacity: 0;
+      transition: opacity 0.1s;
+    }
+    .tooltip-box.visible {
+      opacity: 1;
+    }
+    .tooltip-title {
+      font-weight: 600;
+      margin-bottom: 6px;
+      text-align: center;
+      font-size: 1.05em;
+    }
+    .tooltip-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin: 2px 0;
+      line-height: 1.5;
+    }
+    .tooltip-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .tooltip-label {
+      flex: 1;
+      color: var(--secondary-text-color);
+    }
+    .tooltip-value {
+      font-weight: 600;
+      margin-left: 8px;
+    }
+    .tooltip-total {
+      margin-top: 6px;
+      padding-top: 5px;
+      border-top: 1px solid var(--divider-color, rgba(225,225,225,0.15));
+      font-weight: 700;
+    }
+  `;
+
+  // ─── Main Card Element ──────────────────────────────────────────────────────
+
+  class CustomEnergyChartCard extends HTMLElement {
+    constructor() {
+      super();
+      this.attachShadow({ mode: 'open' });
+      this._config = null;
+      this._hass = null;
+      this._data = null;
+      this._period = 'day';
+      this._loading = false;
+      this._rendered = false;
+      this._resizeObserver = null;
+      this._barHitAreas = [];
+      this._refreshTimer = null;
+    }
+
+    // ── HA lifecycle ──────────────────────────────────────────────────────────
+
+    setConfig(config) {
+      if (!config) throw new Error('Invalid configuration');
+      if (!config.entities || !Array.isArray(config.entities) || !config.entities.length) {
+        throw new Error('Define at least one entity under "entities:"');
+      }
+
+      this._config = {
+        title: config.title || 'Energy Usage',
+        unit: config.unit || 'kWh',
+        period: config.period || 'day',
+        chart_height: Number(config.chart_height) || 250,
+        refresh_interval: Number(config.refresh_interval) || 300, // seconds
+        entities: config.entities.map((e, idx) => {
+          if (typeof e === 'string') {
+            return {
+              statistic_id: e,
+              name: e,
+              color: DEFAULT_COLORS[idx % DEFAULT_COLORS.length],
+              stat_type: 'change',
+            };
+          }
+          return {
+            statistic_id: e.entity || e.statistic_id || '',
+            name: e.name || e.entity || e.statistic_id || `Entity ${idx + 1}`,
+            color: e.color || DEFAULT_COLORS[idx % DEFAULT_COLORS.length],
+            stat_type: e.stat_type || 'change',
+          };
+        }).filter(e => e.statistic_id),
+      };
+
+      this._period = this._config.period;
+
+      if (this._rendered) {
+        this._render();
+        this._rendered = false; // will re-render on next hass set
+      }
+    }
+
+    set hass(hass) {
+      const firstSet = !this._hass;
+      this._hass = hass;
+
+      if (!this._rendered) {
+        this._render();
+        this._rendered = true;
+      }
+
+      if (firstSet) {
+        this._fetchData();
+        this._startRefreshTimer();
+      }
+    }
+
+    connectedCallback() {
+      this._setupResizeObserver();
+    }
+
+    disconnectedCallback() {
+      this._resizeObserver?.disconnect();
+      this._resizeObserver = null;
+      if (this._refreshTimer) {
+        clearInterval(this._refreshTimer);
+        this._refreshTimer = null;
+      }
+    }
+
+    getCardSize() {
+      return 4;
+    }
+
+    static getStubConfig() {
+      return {
+        title: 'Stromnutzung',
+        unit: 'kWh',
+        period: 'day',
+        entities: [
+          { entity: 'sensor.energy_building_a', name: 'Gebäude A Gesamt', color: '#7dbff5' },
+          { entity: 'sensor.energy_building_b', name: 'Gebäude B Gesamt', color: '#488fc2' },
+          { entity: 'sensor.pv_self_consumption', name: 'PV-Eigenverbrauch', color: '#ff9800' },
+        ],
+      };
+    }
+
+    // ── Render ────────────────────────────────────────────────────────────────
+
+    _render() {
+      if (!this._config) return;
+      const { title, entities, chart_height } = this._config;
+
+      this.shadowRoot.innerHTML = `
+        <style>${CARD_STYLES}</style>
+        <ha-card>
+          <div class="card-header">
+            <div class="card-title">${this._escHtml(title)}</div>
+            <div class="total-chip">
+              <span id="total-value">-- ${this._escHtml(this._config.unit)}</span>
+              <span>Gesamtverbrauch</span>
+            </div>
+          </div>
+
+          <div class="period-controls">
+            <button class="period-btn ${this._period === 'day'   ? 'active' : ''}" data-period="day">Tag</button>
+            <button class="period-btn ${this._period === 'week'  ? 'active' : ''}" data-period="week">Woche</button>
+            <button class="period-btn ${this._period === 'month' ? 'active' : ''}" data-period="month">Monat</button>
+          </div>
+
+          <div class="chart-wrapper" id="chart-wrapper" style="min-height:${chart_height}px">
+            <div class="loading-overlay" id="loading">Daten werden geladen\u2026</div>
+            <canvas id="chart-canvas" style="visibility:hidden"></canvas>
+            <div class="tooltip-box" id="tooltip"></div>
+          </div>
+
+          <div class="legend">
+            ${entities.map(e => `
+              <div class="legend-item">
+                <div class="legend-swatch" style="background:${this._escHtml(e.color)}"></div>
+                <span>${this._escHtml(e.name)}</span>
+              </div>
+            `).join('')}
+          </div>
+        </ha-card>
+      `;
+
+      // Period buttons
+      this.shadowRoot.querySelectorAll('.period-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          this._period = btn.dataset.period;
+          this.shadowRoot.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          this._fetchData();
+        });
+      });
+
+      // Canvas hover events
+      const canvas = this.shadowRoot.getElementById('chart-canvas');
+      canvas.addEventListener('mousemove', e => this._onMouseMove(e));
+      canvas.addEventListener('mouseleave', () => this._hideTooltip());
+      canvas.addEventListener('touchstart', e => {
+        if (e.touches.length) this._onMouseMove(e.touches[0]);
+      }, { passive: true });
+
+      this._setupResizeObserver();
+    }
+
+    // ── Resize Observer ───────────────────────────────────────────────────────
+
+    _setupResizeObserver() {
+      const wrapper = this.shadowRoot?.getElementById('chart-wrapper');
+      if (!wrapper) return;
+      this._resizeObserver?.disconnect();
+      this._resizeObserver = new ResizeObserver(() => {
+        if (this._data) this._drawChart();
+      });
+      this._resizeObserver.observe(wrapper);
+    }
+
+    // ── Refresh timer ─────────────────────────────────────────────────────────
+
+    _startRefreshTimer() {
+      if (this._refreshTimer) clearInterval(this._refreshTimer);
+      const ms = Math.max(60, this._config.refresh_interval) * 1000;
+      this._refreshTimer = setInterval(() => this._fetchData(), ms);
+    }
+
+    // ── Statistics fetching ───────────────────────────────────────────────────
+
+    async _fetchData() {
+      if (!this._hass || !this._config || this._loading) return;
+      this._loading = true;
+      this._setLoadingState('loading');
+
+      try {
+        const { startTime, endTime, statPeriod } = this._getTimeRange();
+        const statIds = this._config.entities.map(e => e.statistic_id);
+
+        const result = await this._hass.callWS({
+          type: 'recorder/statistics_during_period',
+          start_time: startTime.toISOString(),
+          end_time: endTime.toISOString(),
+          statistic_ids: statIds,
+          period: statPeriod,
+          types: ['change', 'mean', 'sum'],
+          units: { energy: this._config.unit },
+        });
+
+        this._processAndDraw(result || {}, startTime, endTime, statPeriod);
+      } catch (err) {
+        console.error('[custom-energy-chart-card]', err);
+        this._setLoadingState('error', `Fehler: ${err.message || 'Statistiken nicht verfügbar'}`);
+      } finally {
+        this._loading = false;
+      }
+    }
+
+    _getTimeRange() {
+      const now = new Date();
+      let startTime, statPeriod;
+
+      if (this._period === 'day') {
+        startTime = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+        statPeriod = 'hour';
+      } else if (this._period === 'week') {
+        const dayOfWeek = now.getDay();
+        const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+        startTime = new Date(now.getFullYear(), now.getMonth(), now.getDate() + mondayOffset, 0, 0, 0, 0);
+        statPeriod = 'day';
+      } else {
+        // month
+        startTime = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+        statPeriod = 'day';
+      }
+
+      return { startTime, endTime: now, statPeriod };
+    }
+
+    // ── Data processing ───────────────────────────────────────────────────────
+
+    _processAndDraw(rawStats, startTime, endTime, statPeriod) {
+      const slots = this._buildTimeSlots(startTime, endTime, statPeriod);
+
+      const datasets = this._config.entities.map(entity => {
+        const stats = rawStats[entity.statistic_id] || [];
+
+        // Build a map: slotKey -> value
+        const statsMap = new Map();
+        stats.forEach(s => {
+          const key = this._slotKey(new Date(s.start), statPeriod);
+          let value;
+          if (entity.stat_type === 'mean') {
+            value = s.mean ?? 0;
+          } else {
+            // prefer 'change'; fall back to sum difference
+            value = s.change ?? 0;
+          }
+          statsMap.set(key, Math.max(0, value));
+        });
+
+        return {
+          ...entity,
+          values: slots.map(slot => statsMap.get(this._slotKey(slot, statPeriod)) ?? 0),
+        };
+      });
+
+      const total = datasets.reduce(
+        (sum, ds) => sum + ds.values.reduce((a, b) => a + b, 0), 0
+      );
+
+      // Update total chip
+      const totalEl = this.shadowRoot?.getElementById('total-value');
+      if (totalEl) {
+        totalEl.textContent = `${this._fmtValue(total)} ${this._config.unit}`;
+      }
+
+      this._data = { slots, datasets, statPeriod };
+      this._setLoadingState('done');
+      this._drawChart();
+    }
+
+    _buildTimeSlots(start, end, period) {
+      const slots = [];
+      const cur = new Date(start);
+      while (cur < end) {
+        slots.push(new Date(cur));
+        if (period === 'hour') cur.setHours(cur.getHours() + 1);
+        else cur.setDate(cur.getDate() + 1);
+      }
+      return slots;
+    }
+
+    _slotKey(date, period) {
+      if (period === 'hour') {
+        return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}-${date.getHours()}`;
+      }
+      return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+    }
+
+    // ── Canvas drawing ────────────────────────────────────────────────────────
+
+    _drawChart() {
+      const canvas = this.shadowRoot?.getElementById('chart-canvas');
+      const wrapper = this.shadowRoot?.getElementById('chart-wrapper');
+      if (!canvas || !wrapper || !this._data) return;
+
+      const dpr = window.devicePixelRatio || 1;
+      const W = wrapper.clientWidth;
+      const H = Math.max(wrapper.clientHeight, 150);
+
+      canvas.width  = W * dpr;
+      canvas.height = H * dpr;
+      canvas.style.width  = W + 'px';
+      canvas.style.height = H + 'px';
+
+      const ctx = canvas.getContext('2d');
+      ctx.scale(dpr, dpr);
+      ctx.clearRect(0, 0, W, H);
+
+      // Resolve CSS theme tokens from the host element
+      const cs = getComputedStyle(this.shadowRoot.host || document.documentElement);
+      const secColor   = cs.getPropertyValue('--secondary-text-color').trim() || '#9b9b9b';
+      const gridColor  = cs.getPropertyValue('--divider-color').trim()        || 'rgba(0,0,0,0.1)';
+      const fontFamily = cs.getPropertyValue('--ha-font-family-body').trim()  || 'Roboto, sans-serif';
+
+      const PAD = { top: 16, right: 16, bottom: 38, left: 52 };
+      const cW = W - PAD.left - PAD.right;
+      const cH = H - PAD.top  - PAD.bottom;
+
+      const { slots, datasets } = this._data;
+      const n = slots.length;
+      if (!n || cW <= 0 || cH <= 0) return;
+
+      // Per-slot stacked totals
+      const totals = slots.map((_, i) =>
+        datasets.reduce((s, ds) => s + (ds.values[i] || 0), 0)
+      );
+      const maxVal = Math.max(...totals, 0.001);
+      const yMax   = this._niceMax(maxVal);
+      const yTick  = this._niceTick(yMax);
+
+      // ── Y-axis grid lines ─────────────────────────────────────────────────
+      ctx.font = `10px ${fontFamily}`;
+      ctx.textBaseline = 'middle';
+      ctx.textAlign = 'right';
+
+      for (let v = 0; v <= yMax + yTick * 0.01; v += yTick) {
+        const y = PAD.top + cH - (v / yMax) * cH;
+        if (y < PAD.top - 2) break;
+
+        // Grid line
+        ctx.strokeStyle = gridColor;
+        ctx.lineWidth = 1;
+        ctx.setLineDash([3, 3]);
+        ctx.beginPath();
+        ctx.moveTo(PAD.left, y);
+        ctx.lineTo(PAD.left + cW, y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Y label
+        ctx.fillStyle = secColor;
+        ctx.fillText(this._fmtAxis(v), PAD.left - 5, y);
+      }
+
+      // Y unit label (rotated)
+      ctx.save();
+      ctx.translate(11, PAD.top + cH / 2);
+      ctx.rotate(-Math.PI / 2);
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'bottom';
+      ctx.font = `9px ${fontFamily}`;
+      ctx.fillStyle = secColor;
+      ctx.fillText(this._config.unit, 0, 0);
+      ctx.restore();
+
+      // ── Bar columns ───────────────────────────────────────────────────────
+      const slotW  = cW / n;
+      const barPad = Math.max(1, slotW * 0.12);
+      const barW   = Math.max(1, slotW - barPad * 2);
+
+      this._barHitAreas = slots.map((slot, i) => {
+        const bx = PAD.left + i * slotW + barPad;
+        let stackH = 0;
+        const segData = {};
+
+        datasets.forEach(ds => {
+          const val = Math.max(0, ds.values[i] || 0);
+          segData[ds.statistic_id] = val;
+          if (val <= 0) return;
+
+          const bh = (val / yMax) * cH;
+          const by = PAD.top + cH - stackH - bh;
+
+          ctx.fillStyle = ds.color + 'BF'; // 75 % opacity
+          ctx.beginPath();
+
+          if (stackH === 0) {
+            // Bottom segment: rounded bottom corners
+            const r = Math.min(barW / 3, 4);
+            ctx.moveTo(bx,          by);
+            ctx.lineTo(bx + barW,   by);
+            ctx.lineTo(bx + barW,   by + bh - r);
+            ctx.arcTo(bx + barW,    by + bh, bx + barW - r, by + bh, r);
+            ctx.lineTo(bx + r,      by + bh);
+            ctx.arcTo(bx,           by + bh, bx, by + bh - r, r);
+            ctx.lineTo(bx,          by);
+          } else {
+            ctx.rect(bx, by, barW, bh);
+          }
+          ctx.fill();
+
+          stackH += bh;
+        });
+
+        // X-axis label (skip labels when too dense)
+        const labelStep = n <= 12 ? 1 : n <= 24 ? 2 : Math.ceil(n / 12);
+        if (i % labelStep === 0 || i === n - 1) {
+          ctx.fillStyle = secColor;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'top';
+          ctx.font = `9px ${fontFamily}`;
+          ctx.fillText(
+            this._slotLabel(slot),
+            PAD.left + (i + 0.5) * slotW,
+            PAD.top + cH + 6
+          );
+        }
+
+        return {
+          xStart: PAD.left + i * slotW,
+          xEnd:   PAD.left + (i + 1) * slotW,
+          slot,
+          segData,
+          total: totals[i],
+        };
+      });
+    }
+
+    // ── Axis helpers ──────────────────────────────────────────────────────────
+
+    _niceMax(val) {
+      if (val <= 0) return 1;
+      const exp = Math.floor(Math.log10(val));
+      const mag = Math.pow(10, exp);
+      return Math.ceil((val * 1.12) / mag) * mag;
+    }
+
+    _niceTick(max) {
+      const rough = max / 5;
+      const exp = Math.floor(Math.log10(rough));
+      const mag = Math.pow(10, exp);
+      const f   = rough / mag;
+      return (f < 1.5 ? 1 : f < 3 ? 2 : f < 7 ? 5 : 10) * mag;
+    }
+
+    _slotLabel(date) {
+      if (this._period === 'day') {
+        return `${String(date.getHours()).padStart(2, '0')}:00`;
+      }
+      return date.toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric' });
+    }
+
+    _fmtValue(val) {
+      if (!val || isNaN(val)) return '0';
+      if (val >= 10000) return (val / 1000).toFixed(1) + 'k';
+      if (val < 10)     return val.toFixed(2);
+      return val.toFixed(1);
+    }
+
+    _fmtAxis(val) {
+      if (!val || isNaN(val)) return '0';
+      if (val >= 1000) return (val / 1000).toFixed(1) + 'k';
+      if (val < 1)     return val.toFixed(2);
+      return val.toFixed(1);
+    }
+
+    // ── Loading state ─────────────────────────────────────────────────────────
+
+    _setLoadingState(state, message) {
+      const loading = this.shadowRoot?.getElementById('loading');
+      const canvas  = this.shadowRoot?.getElementById('chart-canvas');
+      if (!loading) return;
+
+      if (state === 'loading') {
+        loading.className = 'loading-overlay';
+        loading.style.display = 'flex';
+        loading.textContent = message || 'Daten werden geladen\u2026';
+        if (canvas) canvas.style.visibility = 'hidden';
+      } else if (state === 'error') {
+        loading.className = 'loading-overlay error';
+        loading.style.display = 'flex';
+        loading.textContent = message || 'Fehler beim Laden der Daten';
+        if (canvas) canvas.style.visibility = 'hidden';
+      } else {
+        loading.style.display = 'none';
+        if (canvas) canvas.style.visibility = 'visible';
+      }
+    }
+
+    // ── Tooltip ───────────────────────────────────────────────────────────────
+
+    _onMouseMove(e) {
+      if (!this._barHitAreas?.length) return;
+      const canvas = this.shadowRoot.getElementById('chart-canvas');
+      const rect   = canvas.getBoundingClientRect();
+      const x      = (e.clientX ?? e.pageX) - rect.left;
+
+      const hit = this._barHitAreas.find(b => x >= b.xStart && x < b.xEnd);
+      if (hit && hit.total > 0) {
+        this._showTooltip(e, hit);
+      } else {
+        this._hideTooltip();
+      }
+    }
+
+    _showTooltip(e, hit) {
+      const tooltip = this.shadowRoot?.getElementById('tooltip');
+      const wrapper = this.shadowRoot?.getElementById('chart-wrapper');
+      if (!tooltip || !wrapper) return;
+
+      let html = `<div class="tooltip-title">${this._escHtml(this._slotLabel(hit.slot))}</div>`;
+
+      this._config.entities.forEach(entity => {
+        const val = hit.segData[entity.statistic_id] || 0;
+        html += `
+          <div class="tooltip-row">
+            <div class="tooltip-dot" style="background:${this._escHtml(entity.color)}"></div>
+            <span class="tooltip-label">${this._escHtml(entity.name)}:</span>
+            <strong class="tooltip-value">${this._fmtValue(val)} ${this._escHtml(this._config.unit)}</strong>
+          </div>`;
+      });
+
+      if (this._config.entities.length > 1) {
+        html += `
+          <div class="tooltip-row tooltip-total">
+            <span style="flex:1">Gesamt</span>
+            <strong>${this._fmtValue(hit.total)} ${this._escHtml(this._config.unit)}</strong>
+          </div>`;
+      }
+
+      tooltip.innerHTML = html;
+      tooltip.classList.add('visible');
+
+      // Position tooltip, staying in bounds
+      requestAnimationFrame(() => {
+        const wRect = wrapper.getBoundingClientRect();
+        const cx    = (e.clientX ?? e.pageX) - wRect.left;
+        const cy    = (e.clientY ?? e.pageY) - wRect.top;
+        const tw    = tooltip.offsetWidth;
+        const th    = tooltip.offsetHeight;
+
+        let left = cx + 14;
+        let top  = cy - th / 2;
+
+        if (left + tw > wRect.width - 4) left = cx - tw - 14;
+        if (top < 4)                      top  = 4;
+        if (top + th > wRect.height - 4)  top  = wRect.height - th - 4;
+
+        tooltip.style.left = left + 'px';
+        tooltip.style.top  = top  + 'px';
+      });
+    }
+
+    _hideTooltip() {
+      this.shadowRoot?.getElementById('tooltip')?.classList.remove('visible');
+    }
+
+    // ── Utility ───────────────────────────────────────────────────────────────
+
+    _escHtml(str) {
+      return String(str ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+  }
+
+  // ─── Registration ───────────────────────────────────────────────────────────
+
+  if (!customElements.get('custom-energy-chart-card')) {
+    customElements.define('custom-energy-chart-card', CustomEnergyChartCard);
+    console.info(
+      `%c  CUSTOM-ENERGY-CHART-CARD  %c v${VERSION} `,
+      'background:#162032;color:#7dbff5;font-weight:700;padding:3px 0',
+      'background:#0d1a26;color:#aaa;padding:3px 4px'
+    );
+  }
+
+  window.customCards = window.customCards || [];
+  if (!window.customCards.find(c => c.type === 'custom-energy-chart-card')) {
+    window.customCards.push({
+      type:        'custom-energy-chart-card',
+      name:        'Custom Energy Chart Card',
+      description: 'Energieverbrauch-Diagramm (ähnlich dem nativen HA-Energie-Dashboard)',
+      preview:     true,
+    });
+  }
+})();
