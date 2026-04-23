@@ -379,15 +379,23 @@
         const { startTime, endTime, statPeriod } = this._getTimeRange();
         const statIds = this._config.entities.map(e => e.statistic_id);
 
-        const result = await this._hass.callWS({
+        if (!statIds.length) {
+          this._setLoadingState('error', 'Keine Entitäten konfiguriert');
+          return;
+        }
+
+        const wsMsg = {
           type: 'recorder/statistics_during_period',
           start_time: startTime.toISOString(),
           end_time: endTime.toISOString(),
           statistic_ids: statIds,
           period: statPeriod,
           types: ['change', 'mean', 'sum'],
-          units: { energy: this._config.unit },
-        });
+        };
+        const unitsParam = this._buildUnitsParam(this._config.unit);
+        if (Object.keys(unitsParam).length) wsMsg.units = unitsParam;
+
+        const result = await this._hass.callWS(wsMsg);
 
         this._processAndDraw(result || {}, startTime, endTime, statPeriod);
       } catch (err) {
@@ -752,6 +760,27 @@
       this.shadowRoot?.getElementById('tooltip')?.classList.remove('visible');
     }
 
+    // ── Unit category mapping ─────────────────────────────────────────────────
+
+    _buildUnitsParam(unit) {
+      const ENERGY_UNITS      = ['Wh', 'kWh', 'MWh', 'GJ', 'BTU'];
+      const VOLUME_UNITS      = ['L', 'mL', 'm³', 'ft³', 'gal', 'fl. oz.', 'CCF'];
+      const MASS_UNITS        = ['g', 'kg', 'oz', 'lb'];
+      const POWER_UNITS       = ['W', 'kW', 'MW'];
+      const DISTANCE_UNITS    = ['mm', 'cm', 'm', 'km', 'in', 'ft', 'mi', 'yd'];
+      const PRESSURE_UNITS    = ['Pa', 'hPa', 'kPa', 'bar', 'cbar', 'mbar', 'psi'];
+      const TEMPERATURE_UNITS = ['°C', '°F', 'K'];
+
+      if (ENERGY_UNITS.includes(unit))      return { energy:      unit };
+      if (VOLUME_UNITS.includes(unit))      return { volume:      unit };
+      if (MASS_UNITS.includes(unit))        return { mass:        unit };
+      if (POWER_UNITS.includes(unit))       return { power:       unit };
+      if (DISTANCE_UNITS.includes(unit))    return { distance:    unit };
+      if (PRESSURE_UNITS.includes(unit))    return { pressure:    unit };
+      if (TEMPERATURE_UNITS.includes(unit)) return { temperature: unit };
+      return {};
+    }
+
     // ── Utility ───────────────────────────────────────────────────────────────
 
     _escHtml(str) {
@@ -841,7 +870,6 @@
       border-top: 1px solid var(--divider-color);
     }
     .entity-form.hidden { display: none; }
-    ha-entity-picker { display: block; width: 100%; }
     .add-btn {
       display: flex;
       align-items: center;
@@ -890,8 +918,8 @@
 
     set hass(hass) {
       this._hass = hass;
-      // Propagate hass to all HA components in the shadow DOM
-      this.shadowRoot.querySelectorAll('ha-entity-picker, ha-form').forEach(el => {
+      // Propagate hass to all HA form components in the shadow DOM
+      this.shadowRoot.querySelectorAll('ha-form').forEach(el => {
         el.hass = hass;
       });
     }
@@ -995,57 +1023,55 @@
         `;
       }).join('');
 
-      // Populate expanded entity form with native HA components (must be set via DOM API)
+      // Populate expanded entity form with a single ha-form using native HA selectors
       entities.forEach((e, i) => {
         if (this._expandedIdx !== i) return;
         const container = list.querySelector(`#ef-${i}`);
         if (!container) return;
 
-        // ha-entity-picker
-        const picker = document.createElement('ha-entity-picker');
-        picker.hass = this._hass;
-        picker.label = 'Entit\u00e4t / Statistik-ID';
-        picker.value = e.statistic_id || '';
-        picker.setAttribute('include-statistics', '');
-        picker.setAttribute('allow-custom-entity', '');
-        picker.addEventListener('value-changed', ev => {
-          entities[i].statistic_id = ev.detail.value || '';
-          if (!entities[i].name && this._hass?.states[ev.detail.value]) {
-            entities[i].name = this._hass.states[ev.detail.value].attributes.friendly_name || ev.detail.value;
-            const ef = list.querySelector(`#ef-${i} ha-form`);
-            if (ef) ef.data = { ...ef.data, name: entities[i].name };
-          }
-          this._updateDot(list, i, entities[i].color);
-          this._fire();
-        });
-        container.appendChild(picker);
-
-        // ha-form for name / color / stat_type — all native HA selectors
         const form = document.createElement('ha-form');
         form.hass   = this._hass;
         form.schema = [
-          { name: 'name',      selector: { text: {} } },
-          { name: 'color',     selector: { color_rgb: {} } },
-          { name: 'stat_type', selector: { select: { options: [
+          { name: 'statistic_id', selector: { entity: { include_statistics: true } } },
+          { name: 'name',         selector: { text: {} } },
+          { name: 'color',        selector: { color_rgb: {} } },
+          { name: 'stat_type',    selector: { select: { options: [
             { value: 'change', label: 'Wert\u00e4nderung (change) \u2013 Energiez\u00e4hler' },
             { value: 'mean',   label: 'Mittelwert (mean) \u2013 Leistungssensor' },
           ]}}},
         ];
-        form.computeLabel = s => ({ name: 'Anzeigename', color: 'Farbe', stat_type: 'Statistik-Typ' }[s.name] || s.name);
+        form.computeLabel = s => ({
+          statistic_id: 'Entit\u00e4t / Statistik-ID',
+          name:         'Anzeigename',
+          color:        'Farbe',
+          stat_type:    'Statistik-Typ',
+        }[s.name] || s.name);
         form.data = {
-          name:      e.name      || '',
-          color:     this._hexToRgb(e.color || DEFAULT_COLORS[i % DEFAULT_COLORS.length]),
-          stat_type: e.stat_type || 'change',
+          statistic_id: e.statistic_id || '',
+          name:         e.name      || '',
+          color:        this._hexToRgb(e.color || DEFAULT_COLORS[i % DEFAULT_COLORS.length]),
+          stat_type:    e.stat_type || 'change',
         };
         form.addEventListener('value-changed', ev => {
-          const v = ev.detail.value;
-          entities[i].name      = v.name;
-          entities[i].color     = this._rgbToHex(v.color);
-          entities[i].stat_type = v.stat_type;
-          // Update color dot and header label live
+          const v           = ev.detail.value;
+          const prevStatId  = entities[i].statistic_id;
+          entities[i].statistic_id = v.statistic_id || '';
+          entities[i].name         = v.name || '';
+          entities[i].color        = this._rgbToHex(v.color);
+          entities[i].stat_type    = v.stat_type;
+
+          // Auto-fill name from friendly_name when entity changes and name is empty
+          if (v.statistic_id && v.statistic_id !== prevStatId && !v.name) {
+            const friendly = this._hass?.states[v.statistic_id]?.attributes?.friendly_name;
+            if (friendly) {
+              entities[i].name = friendly;
+              form.data = { ...form.data, name: friendly };
+            }
+          }
+
           this._updateDot(list, i, entities[i].color);
           const lbl = list.querySelector(`.entity-label[data-i="${i}"]`);
-          if (lbl) lbl.textContent = v.name || entities[i].statistic_id || `Entit\u00e4t ${i + 1}`;
+          if (lbl) lbl.textContent = v.name || v.statistic_id || `Entit\u00e4t ${i + 1}`;
           this._fire();
         });
         container.appendChild(form);
