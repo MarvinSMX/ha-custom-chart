@@ -328,24 +328,35 @@
 
     // Returns true if subscription was established, false if collection not yet available.
     _subscribeEnergyCollection() {
-      const collection = this._hass?.connection?._energy;
-      if (!collection) return false;
+      const conn = this._hass?.connection;
+      const collection = conn?._energy;
+      if (!collection) {
+        console.log('[custom-energy-chart-card] hass.connection._energy not found yet — will retry on next hass update');
+        return false;
+      }
 
       // Tear down any previous subscription before re-subscribing
       if (this._unsubEnergy) { this._unsubEnergy(); this._unsubEnergy = null; }
+
+      console.log('[custom-energy-chart-card] energy collection found — subscribing');
 
       // subscribe() calls back immediately if collection already has state
       let firedImmediately = false;
       this._unsubEnergy = collection.subscribe(state => {
         firedImmediately = true;
         if (!state) return;
-        this._energyStart = state.start ? new Date(state.start) : null;
-        this._energyEnd   = state.end   ? new Date(state.end)   : null;
+        // state.start / state.end may already be Date objects (HA >= 2023) or ISO strings
+        this._energyStart = state.start instanceof Date ? state.start : (state.start ? new Date(state.start) : null);
+        this._energyEnd   = state.end   instanceof Date ? state.end   : (state.end   ? new Date(state.end)   : null);
+        console.log('[custom-energy-chart-card] energy period update:', this._energyStart, '–', this._energyEnd);
         this._fetchData();
       });
 
-      // Collection exists but has no state yet — fetch with fallback range
-      if (!firedImmediately) this._fetchData();
+      // Collection exists but hasn't loaded state yet — fetch with fallback range for now
+      if (!firedImmediately) {
+        console.log('[custom-energy-chart-card] collection found but no state yet, using fallback range');
+        this._fetchData();
+      }
       return true;
     }
 
@@ -373,6 +384,8 @@
           return;
         }
 
+        console.log(`[custom-energy-chart-card] fetching ${statPeriod} stats from ${startTime.toISOString()} to ${endTime.toISOString()} for:`, statIds);
+
         const wsMsg = {
           type: 'recorder/statistics_during_period',
           start_time: startTime.toISOString(),
@@ -381,14 +394,29 @@
           period: statPeriod,
           types: ['change', 'mean', 'sum'],
         };
+        // Build units covering both the card unit and any entity-native units
+        // so mixed sensor types (e.g. kWh + L) are all converted correctly.
         const unitsParam = this._buildUnitsParam(this._config.unit);
+        this._config.entities.forEach(entity => {
+          const stateObj = this._hass.states[entity.statistic_id];
+          const nativeUnit = stateObj?.attributes?.unit_of_measurement;
+          if (nativeUnit) {
+            const extraUnits = this._buildUnitsParam(nativeUnit);
+            Object.entries(extraUnits).forEach(([cat, u]) => {
+              if (!(cat in unitsParam)) unitsParam[cat] = u;
+            });
+          }
+        });
         if (Object.keys(unitsParam).length) wsMsg.units = unitsParam;
 
+        console.log('[custom-energy-chart-card] WS message units:', wsMsg.units);
+
         const result = await this._hass.callWS(wsMsg);
+        console.log('[custom-energy-chart-card] raw result:', result);
 
         this._processAndDraw(result || {}, startTime, endTime, statPeriod);
       } catch (err) {
-        console.error('[custom-energy-chart-card]', err);
+        console.error('[custom-energy-chart-card] fetch error:', err);
         this._setLoadingState('error', `Fehler: ${err.message || 'Statistiken nicht verfügbar'}`);
       } finally {
         this._loading = false;
@@ -421,16 +449,28 @@
       const datasets = this._config.entities.map(entity => {
         const stats = rawStats[entity.statistic_id] || [];
 
+        // Sort ascending so sum-difference fallback works correctly
+        const sorted = [...stats].sort((a, b) => new Date(a.start) - new Date(b.start));
+
+        console.log(`[custom-energy-chart-card] ${entity.statistic_id}: ${sorted.length} buckets, first:`, sorted[0]);
+
         // Build a map: slotKey -> value
         const statsMap = new Map();
-        stats.forEach(s => {
+        sorted.forEach((s, idx) => {
           const key = this._slotKey(new Date(s.start), statPeriod);
           let value;
           if (entity.stat_type === 'mean') {
             value = s.mean ?? 0;
           } else {
-            // prefer 'change'; fall back to sum difference
-            value = s.change ?? 0;
+            // Prefer explicit 'change' field (available for state_class: total_increasing / total).
+            // Fall back to sum difference for integrations that omit 'change' but provide 'sum'.
+            if (s.change != null) {
+              value = s.change;
+            } else if (s.sum != null && idx > 0 && sorted[idx - 1]?.sum != null) {
+              value = s.sum - sorted[idx - 1].sum;
+            } else {
+              value = 0;
+            }
           }
           statsMap.set(key, Math.max(0, value));
         });
@@ -444,6 +484,13 @@
       const total = datasets.reduce(
         (sum, ds) => sum + ds.values.reduce((a, b) => a + b, 0), 0
       );
+
+      // Check if the API returned any data at all
+      const hasAnyBuckets = this._config.entities.some(e => (rawStats[e.statistic_id] || []).length > 0);
+      if (!hasAnyBuckets) {
+        this._setLoadingState('error', 'Keine Statistiken für diesen Zeitraum — Long-term statistics aktiviert?');
+        return;
+      }
 
       // Update total chip — "+N unit" format like hui-energy-graph-chip
       const totalEl = this.shadowRoot?.getElementById('total-value');
