@@ -589,27 +589,24 @@
       if (!canvas || !wrapper || !this._data) return;
 
       const dpr = window.devicePixelRatio || 1;
-      // Canvas is position:absolute filling the wrapper via CSS inset:0.
-      // Reading wrapper dimensions is safe — canvas is out of normal flow
-      // so it cannot influence wrapper height → no feedback loop.
       const W = Math.max(wrapper.clientWidth,  1);
       const H = Math.max(wrapper.clientHeight, 1);
 
       canvas.width  = W * dpr;
       canvas.height = H * dpr;
-      // No style.width / style.height — CSS handles display size.
 
       const ctx = canvas.getContext('2d');
       ctx.scale(dpr, dpr);
       ctx.clearRect(0, 0, W, H);
 
-      // Resolve CSS theme tokens from the host element
+      // Resolve CSS theme tokens
       const cs = getComputedStyle(this.shadowRoot.host || document.documentElement);
       const secColor   = cs.getPropertyValue('--secondary-text-color').trim() || '#9b9b9b';
-      const gridColor  = cs.getPropertyValue('--divider-color').trim()        || 'rgba(0,0,0,0.1)';
+      const gridColor  = cs.getPropertyValue('--divider-color').trim()        || 'rgba(0,0,0,0.12)';
       const fontFamily = cs.getPropertyValue('--ha-font-family-body').trim()  || 'Roboto, sans-serif';
 
-      const PAD = { top: 16, right: 16, bottom: 38, left: 52 };
+      // No rotated Y-unit label — padding matches ECharts grid layout
+      const PAD = { top: 12, right: 12, bottom: 36, left: 46 };
       const cW = W - PAD.left - PAD.right;
       const cH = H - PAD.top  - PAD.bottom;
 
@@ -617,7 +614,6 @@
       const n = slots.length;
       if (!n || cW <= 0 || cH <= 0) return;
 
-      // Per-slot stacked totals
       const totals = slots.map((_, i) =>
         datasets.reduce((s, ds) => s + (ds.values[i] || 0), 0)
       );
@@ -625,8 +621,10 @@
       const yMax   = this._niceMax(maxVal);
       const yTick  = this._niceTick(yMax);
 
-      // ── Y-axis grid lines ─────────────────────────────────────────────────
-      ctx.font = `10px ${fontFamily}`;
+      // ── Y-axis grid lines (ECharts style: solid, thin) ────────────────────
+      ctx.setLineDash([]);
+      ctx.lineWidth = 1;
+      ctx.font = `11px ${fontFamily}`;
       ctx.textBaseline = 'middle';
       ctx.textAlign = 'right';
 
@@ -634,43 +632,38 @@
         const y = PAD.top + cH - (v / yMax) * cH;
         if (y < PAD.top - 2) break;
 
-        // Grid line
+        // Solid grid line — same style as ECharts splitLine
         ctx.strokeStyle = gridColor;
-        ctx.lineWidth = 1;
-        ctx.setLineDash([3, 3]);
         ctx.beginPath();
         ctx.moveTo(PAD.left, y);
         ctx.lineTo(PAD.left + cW, y);
         ctx.stroke();
-        ctx.setLineDash([]);
 
-        // Y label
+        // Y label (value only, no unit)
         ctx.fillStyle = secColor;
-        ctx.fillText(this._fmtAxis(v), PAD.left - 5, y);
+        ctx.fillText(this._fmtAxis(v), PAD.left - 6, y);
       }
 
-      // Y unit label (rotated)
-      ctx.save();
-      ctx.translate(11, PAD.top + cH / 2);
-      ctx.rotate(-Math.PI / 2);
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'bottom';
-      ctx.font = `9px ${fontFamily}`;
-      ctx.fillStyle = secColor;
-      ctx.fillText(this._config.unit, 0, 0);
-      ctx.restore();
-
       // ── Bar columns ───────────────────────────────────────────────────────
-      const slotW  = cW / n;
-      const barPad = Math.max(1, slotW * 0.12);
-      const barW   = Math.max(1, slotW - barPad * 2);
+      const slotW = cW / n;
+      // ECharts-like width: 60% of slot, capped at 28px for readability
+      const barW  = Math.min(Math.max(2, slotW * 0.6), 28);
+      const barOX = (slotW - barW) / 2; // offset within slot to centre the bar
+
+      // Pre-compute the topmost non-zero dataset index per slot
+      // (only the topmost segment gets rounded top corners, matching ECharts)
+      const topIdx = slots.map((_, i) => {
+        let last = -1;
+        datasets.forEach((ds, di) => { if ((ds.values[i] || 0) > 0) last = di; });
+        return last;
+      });
 
       this._barHitAreas = slots.map((slot, i) => {
-        const bx = PAD.left + i * slotW + barPad;
+        const bx = PAD.left + i * slotW + barOX;
         let stackH = 0;
         const segData = {};
 
-        datasets.forEach(ds => {
+        datasets.forEach((ds, di) => {
           const val = Math.max(0, ds.values[i] || 0);
           segData[ds.statistic_id] = val;
           if (val <= 0) return;
@@ -678,34 +671,34 @@
           const bh = (val / yMax) * cH;
           const by = PAD.top + cH - stackH - bh;
 
-          ctx.fillStyle = ds.color + '80'; // 50 % opacity — matches native ECharts bar opacity
+          ctx.fillStyle = ds.color + '80'; // 50% opacity — matches native ECharts bar style
           ctx.beginPath();
 
-          if (stackH === 0) {
-            // Bottom segment: rounded bottom corners
+          if (di === topIdx[i] && bh >= 2) {
+            // Topmost segment: rounded top-left + top-right corners (ECharts default)
             const r = Math.min(barW / 3, 4);
-            ctx.moveTo(bx,          by);
-            ctx.lineTo(bx + barW,   by);
-            ctx.lineTo(bx + barW,   by + bh - r);
-            ctx.arcTo(bx + barW,    by + bh, bx + barW - r, by + bh, r);
-            ctx.lineTo(bx + r,      by + bh);
-            ctx.arcTo(bx,           by + bh, bx, by + bh - r, r);
-            ctx.lineTo(bx,          by);
+            ctx.moveTo(bx + r,         by);
+            ctx.lineTo(bx + barW - r,  by);
+            ctx.arcTo(bx + barW, by,   bx + barW, by + r, r);
+            ctx.lineTo(bx + barW,      by + bh);
+            ctx.lineTo(bx,             by + bh);
+            ctx.lineTo(bx,             by + r);
+            ctx.arcTo(bx,       by,    bx + r,     by,     r);
+            ctx.closePath();
           } else {
             ctx.rect(bx, by, barW, bh);
           }
           ctx.fill();
-
           stackH += bh;
         });
 
-        // X-axis label (skip labels when too dense)
+        // X-axis label — skip when too dense, always show first and last
         const labelStep = n <= 12 ? 1 : n <= 24 ? 2 : Math.ceil(n / 12);
         if (i % labelStep === 0 || i === n - 1) {
           ctx.fillStyle = secColor;
           ctx.textAlign = 'center';
           ctx.textBaseline = 'top';
-          ctx.font = `9px ${fontFamily}`;
+          ctx.font = `11px ${fontFamily}`;
           ctx.fillText(
             this._slotLabel(slot, statPeriod),
             PAD.left + (i + 0.5) * slotW,
@@ -716,8 +709,7 @@
         return {
           xStart: PAD.left + i * slotW,
           xEnd:   PAD.left + (i + 1) * slotW,
-          slot,
-          segData,
+          slot, segData,
           total: totals[i],
         };
       });
