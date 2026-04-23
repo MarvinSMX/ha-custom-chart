@@ -502,7 +502,7 @@
       const cW = W - PAD.left - PAD.right;
       const cH = H - PAD.top  - PAD.bottom;
 
-      const { slots, datasets } = this._data;
+      const { slots, datasets, statPeriod } = this._data;
       const n = slots.length;
       if (!n || cW <= 0 || cH <= 0) return;
 
