@@ -52,11 +52,10 @@
       box-sizing: border-box;
     }
     .card-header {
-      padding: 12px 16px 6px;
+      padding: 16px 16px 8px;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      flex-wrap: wrap;
       gap: 8px;
     }
     .card-title {
@@ -64,47 +63,139 @@
       font-weight: 500;
       color: var(--primary-text-color);
       flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
+    /* Total chip — matches hui-energy-graph-chip */
     .total-chip {
       display: inline-flex;
       align-items: center;
-      gap: 4px;
       padding: 4px 12px;
       background: rgba(var(--rgb-primary-text-color, 33,33,33), 0.06);
       border-radius: 16px;
-      font-size: 0.8em;
-      color: var(--secondary-text-color);
+      font-size: 0.875em;
+      font-weight: 500;
+      color: var(--primary-text-color);
       white-space: nowrap;
+      cursor: default;
+      flex-shrink: 0;
     }
-    .total-chip .chip-icon {
-      font-size: 1em;
+    /* Period selector — matches hui-energy-period-selector */
+    .period-selector {
+      border-bottom: 1px solid var(--divider-color, rgba(0,0,0,0.08));
     }
-    .period-controls {
+    .period-content {
       display: flex;
-      gap: 4px;
-      padding: 2px 16px 8px;
+      align-items: center;
+      padding: 4px 4px 4px 6px;
+      min-height: 48px;
     }
-    .period-btn {
-      padding: 3px 12px;
-      border: 1px solid var(--divider-color, rgba(0,0,0,0.12));
-      border-radius: 12px;
-      background: transparent;
-      color: var(--secondary-text-color);
+    .period-date-section {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      padding: 4px 8px;
+      border-radius: 8px;
+      cursor: default;
+      font-size: 0.875em;
+      font-weight: 500;
+      color: var(--primary-text-color);
+      transition: background 0.15s;
+      user-select: none;
+      min-width: 0;
+      overflow: hidden;
+    }
+    .period-date-section:hover {
+      background: rgba(var(--rgb-primary-text-color,33,33,33), 0.05);
+    }
+    #period-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .period-actions { display: flex; align-items: center; flex-shrink: 0; }
+    /* Icon button — matches ha-icon-button plain/neutral */
+    .p-icon-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 36px;
+      height: 36px;
+      border: none;
+      border-radius: 50%;
+      background: none;
+      color: var(--primary-text-color);
       cursor: pointer;
-      font-size: 0.75em;
-      font-family: var(--ha-font-family-body, Roboto, sans-serif);
-      transition: background 0.15s, color 0.15s, border-color 0.15s;
+      padding: 0;
+      font-family: inherit;
+      transition: background 0.15s;
+      -webkit-tap-highlight-color: transparent;
       outline: none;
       user-select: none;
+      flex-shrink: 0;
     }
-    .period-btn:hover:not(.active) {
-      background: rgba(var(--rgb-primary-text-color, 33,33,33), 0.06);
-    }
-    .period-btn.active {
+    .p-icon-btn svg { width: 20px; height: 20px; fill: currentColor; display: block; }
+    .p-icon-btn:hover:not([disabled]) { background: rgba(var(--rgb-primary-text-color,33,33,33), 0.08); }
+    .p-icon-btn[disabled] { opacity: 0.38; cursor: default; pointer-events: none; }
+    /* "Jetzt" — matches ha-button appearance=filled variant=brand size=small */
+    .period-now-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      height: 28px;
+      padding: 0 14px;
+      border: none;
+      border-radius: 14px;
       background: var(--primary-color, #009ac7);
-      border-color: var(--primary-color, #009ac7);
-      color: #fff;
+      color: var(--on-primary-color, #fff);
+      font-size: 0.8125em;
+      font-weight: 500;
+      font-family: inherit;
+      cursor: pointer;
+      margin-right: 4px;
+      white-space: nowrap;
+      outline: none;
+      transition: box-shadow 0.15s;
+      user-select: none;
     }
+    .period-now-btn:hover { box-shadow: 0 2px 6px rgba(0,0,0,0.2); }
+    .period-now-btn.hidden { display: none; }
+    /* Overflow menu */
+    .period-menu-wrap { position: relative; }
+    .menu-popup {
+      position: absolute;
+      right: 0;
+      top: calc(100% + 4px);
+      min-width: 200px;
+      background: var(--card-background-color, var(--primary-background-color, #fff));
+      border: 1px solid var(--divider-color, rgba(0,0,0,0.12));
+      border-radius: var(--ha-card-border-radius, 12px);
+      box-shadow: 0 4px 20px rgba(0,0,0,0.18);
+      z-index: 200;
+      overflow: hidden;
+      display: none;
+    }
+    .menu-popup.open { display: block; }
+    .menu-section-title {
+      padding: 10px 16px 4px;
+      font-size: 0.72em;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--secondary-text-color);
+    }
+    .menu-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 16px;
+      cursor: pointer;
+      color: var(--primary-text-color);
+      font-size: 0.875em;
+      user-select: none;
+    }
+    .menu-item:hover { background: rgba(var(--rgb-primary-text-color,33,33,33), 0.06); }
+    .menu-item.period-active { color: var(--primary-color, #009ac7); }
+    .menu-item svg { width: 20px; height: 20px; fill: currentColor; flex-shrink: 0; }
+    .menu-divider { height: 1px; background: var(--divider-color, rgba(0,0,0,0.1)); margin: 4px 0; }
     .chart-wrapper {
       flex: 1;
       position: relative;
@@ -212,6 +303,7 @@
       this._hass = null;
       this._data = null;
       this._period = 'day';
+      this._currentDate = new Date();
       this._loading = false;
       this._rendered = false;
       this._barHitAreas = [];
@@ -305,22 +397,50 @@
     _render() {
       if (!this._config) return;
       const { title, entities } = this._config;
+      const SVG_CAL   = 'M19,19H5V8H19M16,1V3H8V1H6V3H5C3.89,3 3,3.89 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V5C21,3.89 20.1,3 19,3H18V1M17,12H12V17H17V12Z';
+      const SVG_BACK  = 'M15.41,16.58L10.83,12L15.41,7.41L14,6L8,12L14,18L15.41,16.58Z';
+      const SVG_FWD   = 'M8.59,16.58L13.17,12L8.59,7.41L10,6L16,12L10,18L8.59,16.58Z';
+      const SVG_MORE  = 'M12,16A2,2 0 0,1 14,18A2,2 0 0,1 12,20A2,2 0 0,1 10,18A2,2 0 0,1 12,16M12,10A2,2 0 0,1 14,12A2,2 0 0,1 12,14A2,2 0 0,1 10,12A2,2 0 0,1 12,10M12,4A2,2 0 0,1 14,6A2,2 0 0,1 12,8A2,2 0 0,1 10,6A2,2 0 0,1 12,4Z';
+      const SVG_DAY   = 'M9,10H7V12H9V10M13,10H11V12H13V10M17,10H15V12H17V10M19,3A2,2 0 0,1 21,5V19A2,2 0 0,1 19,21H5C3.89,21 3,20.1 3,19V5A2,2 0 0,1 5,3H6V1H8V3H16V1H18V3H19M19,19V8H5V19H19Z';
+      const SVG_WEEK  = 'M9,10V12H7V10H9M13,10V12H11V10H13M17,10V12H15V10H17M19,3A2,2 0 0,1 21,5V19A2,2 0 0,1 19,21H5C3.89,21 3,20.1 3,19V5A2,2 0 0,1 5,3H6V1H8V3H16V1H18V3H19M19,19V8H5V19H19M9,14V16H7V14H9M13,14V16H11V14H13M17,14V16H15V14H17Z';
+      const SVG_MONTH = 'M19,3H5C3.89,3 3,3.89 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V5C21,3.89 20.1,3 19,3M7,7H9V9H7V7M7,11H9V13H7V11M7,15H9V17H7V15M15,17H11V15H15V17M15,13H11V11H15V13M17,9H11V7H17V9Z';
+      const SVG_DL    = 'M5,20H19V18H5M19,9H15V3H9V9H5L12,16L19,9Z';
+      const icon = p => `<svg viewBox="0 0 24 24"><path d="${p}"/></svg>`;
+      const isNow = this._isNow();
 
       this.shadowRoot.innerHTML = `
         <style>${CARD_STYLES}</style>
         <ha-card>
           <div class="card-header">
             <div class="card-title">${this._escHtml(title)}</div>
-            <div class="total-chip">
+            <div class="total-chip" id="total-chip">
               <span id="total-value">-- ${this._escHtml(this._config.unit)}</span>
-              <span>Gesamtverbrauch</span>
             </div>
           </div>
 
-          <div class="period-controls">
-            <button class="period-btn ${this._period === 'day'   ? 'active' : ''}" data-period="day">Tag</button>
-            <button class="period-btn ${this._period === 'week'  ? 'active' : ''}" data-period="week">Woche</button>
-            <button class="period-btn ${this._period === 'month' ? 'active' : ''}" data-period="month">Monat</button>
+          <div class="period-selector">
+            <div class="period-content">
+              <button class="p-icon-btn" id="period-cal-btn" title="Zeitspanne w\u00e4hlen" aria-label="Zeitspanne w\u00e4hlen">${icon(SVG_CAL)}</button>
+              <div class="period-date-section" id="period-label-section">
+                <span id="period-label">${this._escHtml(this._getPeriodLabel())}</span>
+              </div>
+              <div class="period-actions">
+                <button class="period-now-btn${isNow ? ' hidden' : ''}" id="period-now">Jetzt</button>
+                <button class="p-icon-btn" id="period-back" title="Zur\u00fcck" aria-label="Zur\u00fcck">${icon(SVG_BACK)}</button>
+                <button class="p-icon-btn" id="period-forward" title="Vor" aria-label="Vor"${isNow ? ' disabled' : ''}>${icon(SVG_FWD)}</button>
+                <div class="period-menu-wrap">
+                  <button class="p-icon-btn" id="period-menu-btn" title="Mehr" aria-label="Mehr">${icon(SVG_MORE)}</button>
+                  <div class="menu-popup" id="period-menu-popup">
+                    <div class="menu-section-title">Zeitraum</div>
+                    <div class="menu-item${this._period === 'day'   ? ' period-active' : ''}" data-period="day">${icon(SVG_DAY)} Tag</div>
+                    <div class="menu-item${this._period === 'week'  ? ' period-active' : ''}" data-period="week">${icon(SVG_WEEK)} Woche</div>
+                    <div class="menu-item${this._period === 'month' ? ' period-active' : ''}" data-period="month">${icon(SVG_MONTH)} Monat</div>
+                    <div class="menu-divider"></div>
+                    <div class="menu-item" id="menu-download">${icon(SVG_DL)} Daten herunterladen</div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
 
           <div class="chart-wrapper" id="chart-wrapper">
@@ -340,12 +460,45 @@
         </ha-card>
       `;
 
-      // Period buttons
-      this.shadowRoot.querySelectorAll('.period-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-          this._period = btn.dataset.period;
-          this.shadowRoot.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active'));
-          btn.classList.add('active');
+      // Close menu when clicking anywhere outside the menu wrap
+      this.shadowRoot.addEventListener('click', ev => {
+        if (!ev.target.closest('.period-menu-wrap')) {
+          this.shadowRoot.getElementById('period-menu-popup')?.classList.remove('open');
+        }
+      });
+
+      // Calendar button → open/close period menu
+      this.shadowRoot.getElementById('period-cal-btn').addEventListener('click', ev => {
+        ev.stopPropagation();
+        this.shadowRoot.getElementById('period-menu-popup').classList.toggle('open');
+      });
+
+      // Date label click → toggle menu
+      this.shadowRoot.getElementById('period-label-section').addEventListener('click', ev => {
+        ev.stopPropagation();
+        this.shadowRoot.getElementById('period-menu-popup').classList.toggle('open');
+      });
+
+      // "Jetzt" button
+      this.shadowRoot.getElementById('period-now').addEventListener('click', () => this._goToNow());
+
+      // Back / Forward
+      this.shadowRoot.getElementById('period-back').addEventListener('click', () => this._navigateBack());
+      this.shadowRoot.getElementById('period-forward').addEventListener('click', () => this._navigateForward());
+
+      // Overflow menu toggle
+      this.shadowRoot.getElementById('period-menu-btn').addEventListener('click', ev => {
+        ev.stopPropagation();
+        this.shadowRoot.getElementById('period-menu-popup').classList.toggle('open');
+      });
+
+      // Period selection in menu
+      this.shadowRoot.querySelectorAll('.menu-item[data-period]').forEach(item => {
+        item.addEventListener('click', () => {
+          this._period = item.dataset.period;
+          this._currentDate = new Date();
+          this.shadowRoot.getElementById('period-menu-popup').classList.remove('open');
+          this._updatePeriodControls();
           this._fetchData();
         });
       });
@@ -357,7 +510,6 @@
       canvas.addEventListener('touchstart', e => {
         if (e.touches.length) this._onMouseMove(e.touches[0]);
       }, { passive: true });
-
     }
 
     // ── Refresh timer ─────────────────────────────────────────────────────────
@@ -407,24 +559,27 @@
     }
 
     _getTimeRange() {
+      const ref = this._currentDate;
       const now = new Date();
-      let startTime, statPeriod;
+      let startTime, endTime, statPeriod;
 
       if (this._period === 'day') {
-        startTime = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+        startTime  = new Date(ref.getFullYear(), ref.getMonth(), ref.getDate(), 0, 0, 0, 0);
+        endTime    = this._isNow() ? now : new Date(ref.getFullYear(), ref.getMonth(), ref.getDate() + 1, 0, 0, 0, 0);
         statPeriod = 'hour';
       } else if (this._period === 'week') {
-        const dayOfWeek = now.getDay();
-        const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
-        startTime = new Date(now.getFullYear(), now.getMonth(), now.getDate() + mondayOffset, 0, 0, 0, 0);
+        const day = ref.getDay();
+        const mon = new Date(ref.getFullYear(), ref.getMonth(), ref.getDate() + (day === 0 ? -6 : 1 - day), 0, 0, 0, 0);
+        startTime  = mon;
+        endTime    = this._isNow() ? now : new Date(mon.getFullYear(), mon.getMonth(), mon.getDate() + 7, 0, 0, 0, 0);
         statPeriod = 'day';
       } else {
-        // month
-        startTime = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+        startTime  = new Date(ref.getFullYear(), ref.getMonth(), 1, 0, 0, 0, 0);
+        endTime    = this._isNow() ? now : new Date(ref.getFullYear(), ref.getMonth() + 1, 1, 0, 0, 0, 0);
         statPeriod = 'day';
       }
 
-      return { startTime, endTime: now, statPeriod };
+      return { startTime, endTime, statPeriod };
     }
 
     // ── Data processing ───────────────────────────────────────────────────────
@@ -459,10 +614,13 @@
         (sum, ds) => sum + ds.values.reduce((a, b) => a + b, 0), 0
       );
 
-      // Update total chip
+      // Update total chip — "+N unit" format like hui-energy-graph-chip
       const totalEl = this.shadowRoot?.getElementById('total-value');
       if (totalEl) {
-        totalEl.textContent = `${this._fmtValue(total)} ${this._config.unit}`;
+        const prefix = total > 0 ? '+' : '';
+        totalEl.textContent = `${prefix}${this._fmtValue(total)} ${this._config.unit}`;
+        const chip = totalEl.closest('#total-chip');
+        if (chip) chip.title = `${this._fmtValue(total)} ${this._config.unit} Gesamtverbrauch`;
       }
 
       this._data = { slots, datasets, statPeriod };
@@ -758,6 +916,89 @@
 
     _hideTooltip() {
       this.shadowRoot?.getElementById('tooltip')?.classList.remove('visible');
+    }
+
+    // ── Period navigation ─────────────────────────────────────────────────────
+
+    _isNow() {
+      const now = new Date();
+      const d   = this._currentDate;
+      if (this._period === 'day') {
+        return d.getFullYear() === now.getFullYear() &&
+               d.getMonth()    === now.getMonth()    &&
+               d.getDate()     === now.getDate();
+      } else if (this._period === 'week') {
+        const day = d.getDay();
+        const mon = new Date(d.getFullYear(), d.getMonth(), d.getDate() + (day === 0 ? -6 : 1 - day));
+        const sun = new Date(mon.getFullYear(), mon.getMonth(), mon.getDate() + 7);
+        return now >= mon && now < sun;
+      } else {
+        return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+      }
+    }
+
+    _getPeriodLabel() {
+      const d = this._currentDate;
+      if (this._period === 'day') {
+        return d.toLocaleDateString('de-DE', {
+          day: 'numeric', month: 'short',
+          ...(d.getFullYear() !== new Date().getFullYear() && { year: 'numeric' }),
+        });
+      } else if (this._period === 'week') {
+        const day = d.getDay();
+        const mon = new Date(d.getFullYear(), d.getMonth(), d.getDate() + (day === 0 ? -6 : 1 - day));
+        const sun = new Date(mon.getFullYear(), mon.getMonth(), mon.getDate() + 6);
+        const fmt = dt => dt.toLocaleDateString('de-DE', { day: 'numeric', month: 'short' });
+        if (mon.getMonth() === sun.getMonth()) {
+          return `${mon.getDate()}.\u2013${fmt(sun)}`;
+        }
+        return `${fmt(mon)}\u2013${fmt(sun)}`;
+      } else {
+        return d.toLocaleDateString('de-DE', { month: 'long', year: 'numeric' });
+      }
+    }
+
+    _updatePeriodControls() {
+      const label  = this.shadowRoot?.getElementById('period-label');
+      const nowBtn = this.shadowRoot?.getElementById('period-now');
+      const fwdBtn = this.shadowRoot?.getElementById('period-forward');
+      const isNow  = this._isNow();
+      if (label)  label.textContent = this._getPeriodLabel();
+      if (nowBtn) nowBtn.classList.toggle('hidden', isNow);
+      if (fwdBtn) {
+        if (isNow) fwdBtn.setAttribute('disabled', '');
+        else       fwdBtn.removeAttribute('disabled');
+      }
+      this.shadowRoot?.querySelectorAll('.menu-item[data-period]').forEach(item => {
+        item.classList.toggle('period-active', item.dataset.period === this._period);
+      });
+    }
+
+    _navigateBack() {
+      const d = new Date(this._currentDate);
+      if      (this._period === 'day')   d.setDate(d.getDate() - 1);
+      else if (this._period === 'week')  d.setDate(d.getDate() - 7);
+      else                               d.setMonth(d.getMonth() - 1);
+      this._currentDate = d;
+      this._updatePeriodControls();
+      this._fetchData();
+    }
+
+    _navigateForward() {
+      if (this._isNow()) return;
+      const d = new Date(this._currentDate);
+      if      (this._period === 'day')   d.setDate(d.getDate() + 1);
+      else if (this._period === 'week')  d.setDate(d.getDate() + 7);
+      else                               d.setMonth(d.getMonth() + 1);
+      this._currentDate = d;
+      this._updatePeriodControls();
+      this._fetchData();
+    }
+
+    _goToNow() {
+      this._currentDate = new Date();
+      this._updatePeriodControls();
+      this._fetchData();
     }
 
     // ── Unit category mapping ─────────────────────────────────────────────────
