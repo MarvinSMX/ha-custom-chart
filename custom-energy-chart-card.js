@@ -106,10 +106,10 @@
       color: #fff;
     }
     .chart-wrapper {
-      flex: 1;
       position: relative;
       padding: 0 12px 4px;
-      min-height: 150px;
+      overflow: hidden;
+      /* height is set inline from config — never derived from canvas content */
     }
     canvas {
       display: block;
@@ -325,7 +325,7 @@
             <button class="period-btn ${this._period === 'month' ? 'active' : ''}" data-period="month">Monat</button>
           </div>
 
-          <div class="chart-wrapper" id="chart-wrapper" style="min-height:${chart_height}px">
+          <div class="chart-wrapper" id="chart-wrapper" style="height:${chart_height}px">
             <div class="loading-overlay" id="loading">Daten werden geladen\u2026</div>
             <canvas id="chart-canvas" style="visibility:hidden"></canvas>
             <div class="tooltip-box" id="tooltip"></div>
@@ -504,7 +504,9 @@
 
       const dpr = window.devicePixelRatio || 1;
       const W = wrapper.clientWidth;
-      const H = Math.max(wrapper.clientHeight, 150);
+      // Use fixed config height — never read wrapper.clientHeight, which would
+      // create a ResizeObserver feedback loop (canvas height → wrapper grows → observer fires → repeat).
+      const H = Math.max(this._config.chart_height - 4, 150); // -4 for bottom padding
 
       canvas.width  = W * dpr;
       canvas.height = H * dpr;
