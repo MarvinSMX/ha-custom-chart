@@ -644,8 +644,19 @@
         ctx.fillText(this._fmtAxis(v), PAD.left - 6, y);
       }
 
-      // ── Bar columns ───────────────────────────────────────────────────────
+      // ── X-axis split lines (vertical grid — ECharts category axis splitLine) ──
       const slotW = cW / n;
+      ctx.strokeStyle = gridColor;
+      ctx.lineWidth = 1;
+      for (let i = 0; i <= n; i++) {
+        const x = PAD.left + i * slotW;
+        ctx.beginPath();
+        ctx.moveTo(x, PAD.top);
+        ctx.lineTo(x, PAD.top + cH);
+        ctx.stroke();
+      }
+
+      // ── Bar columns ───────────────────────────────────────────────────────
       // ECharts-like width: 60% of slot, capped at 28px for readability
       const barW  = Math.min(Math.max(2, slotW * 0.6), 28);
       const barOX = (slotW - barW) / 2; // offset within slot to centre the bar
