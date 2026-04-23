@@ -202,6 +202,7 @@
       this._config = {
         title: config.title || 'Energy Usage',
         unit: config.unit || 'kWh',
+        period: config.period || 'day',       // fallback period when no energy-date-selection is present
         refresh_interval: Number(config.refresh_interval) || 300, // seconds
         entities: config.entities.map((e, idx) => {
           if (typeof e === 'string') {
@@ -237,9 +238,12 @@
       }
 
       if (firstSet) {
+        // One-time diagnostic: show all keys on the connection so we can
+        // find where the energy collection might actually be stored.
+        console.log('[custom-energy-chart-card] hass.connection keys:', Object.keys(hass.connection || {}));
         this._startRefreshTimer();
         // Try to subscribe; if the energy collection isn't ready yet,
-        // fall back to today/hourly and keep retrying on every hass update.
+        // fall back to configured period and keep retrying on every hass update.
         if (!this._subscribeEnergyCollection()) {
           this._fetchData();
         }
@@ -329,9 +333,35 @@
     // Returns true if subscription was established, false if collection not yet available.
     _subscribeEnergyCollection() {
       const conn = this._hass?.connection;
-      const collection = conn?._energy;
+      if (!conn) return false;
+
+      // Standard path used by HA energy cards
+      let collection = conn._energy;
+
+      // If not found at _energy, scan all connection keys for an energy-like collection
+      // (handles cases where the property key has changed in newer HA versions)
       if (!collection) {
-        console.log('[custom-energy-chart-card] hass.connection._energy not found yet — will retry on next hass update');
+        for (const key of Object.keys(conn)) {
+          const candidate = conn[key];
+          if (
+            candidate &&
+            typeof candidate === 'object' &&
+            typeof candidate.subscribe === 'function' &&
+            candidate.state && typeof candidate.state.start !== 'undefined'
+          ) {
+            console.log(`[custom-energy-chart-card] found energy collection at hass.connection.${key}`);
+            collection = candidate;
+            break;
+          }
+        }
+      }
+
+      if (!collection) {
+        // Only log the "not found" message every 10 retries to avoid console spam
+        this._subRetryCount = (this._subRetryCount || 0) + 1;
+        if (this._subRetryCount % 10 === 1) {
+          console.log(`[custom-energy-chart-card] hass.connection._energy not found (attempt ${this._subRetryCount}) — is energy-date-selection on this dashboard?`);
+        }
         return false;
       }
 
@@ -432,8 +462,23 @@
         const statPeriod = diffDays <= 1.5 ? 'hour' : 'day';
         return { startTime: start, endTime: end, statPeriod };
       }
-      // Fallback when no energy collection is connected: today, hourly
+      // Fallback when no energy-date-selection is connected — use configured period
       const now = new Date();
+      const period = this._config?.period || 'day';
+      if (period === 'month') {
+        return {
+          startTime: new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0),
+          endTime:   now,
+          statPeriod: 'day',
+        };
+      }
+      if (period === 'week') {
+        const start = new Date(now);
+        start.setDate(now.getDate() - 6);
+        start.setHours(0, 0, 0, 0);
+        return { startTime: start, endTime: now, statPeriod: 'day' };
+      }
+      // day: today hourly
       return {
         startTime: new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0),
         endTime:   now,
@@ -452,7 +497,11 @@
         // Sort ascending so sum-difference fallback works correctly
         const sorted = [...stats].sort((a, b) => new Date(a.start) - new Date(b.start));
 
-        console.log(`[custom-energy-chart-card] ${entity.statistic_id}: ${sorted.length} buckets, first:`, sorted[0]);
+        const sample = sorted[0];
+        console.log(
+          `[custom-energy-chart-card] ${entity.statistic_id}: ${sorted.length} buckets,`,
+          `first: { start:${sample?.start}, change:${sample?.change}, sum:${sample?.sum}, mean:${sample?.mean} }`
+        );
 
         // Build a map: slotKey -> value
         const statsMap = new Map();
@@ -995,10 +1044,16 @@
       form.schema = [
         { name: 'title',            selector: { text: {} } },
         { name: 'unit',             selector: { text: {} } },
+        { name: 'period',           selector: { select: { options: [
+          { value: 'day',   label: 'Tag (heute, st\u00fcndlich)' },
+          { value: 'week',  label: 'Woche (letzte 7 Tage)' },
+          { value: 'month', label: 'Monat (dieser Monat)' },
+        ]}}},
         { name: 'refresh_interval', selector: { number: { min: 60, max: 3600, step: 60, mode: 'box' } } },
       ];
       form.computeLabel = s => ({
         title: 'Titel', unit: 'Einheit',
+        period: 'Fallback-Zeitraum (ohne Zeitraum-Selektor)',
         refresh_interval: 'Aktualisierungsintervall (s)',
       }[s.name] || s.name);
       this._syncGeneralForm();
@@ -1029,6 +1084,7 @@
       f.data = {
         title:            this._config.title            ?? '',
         unit:             this._config.unit             ?? 'kWh',
+        period:           this._config.period           ?? 'day',
         refresh_interval: this._config.refresh_interval ?? 300,
       };
     }
