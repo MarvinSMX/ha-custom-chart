@@ -108,11 +108,10 @@
     .chart-wrapper {
       position: relative;
       padding: 0 12px 4px;
-      overflow: hidden;
-      /* height is set inline from config — never derived from canvas content */
     }
     canvas {
       display: block;
+      width: 100%;
     }
     .loading-overlay {
       position: absolute;
@@ -212,7 +211,6 @@
       this._period = 'day';
       this._loading = false;
       this._rendered = false;
-      this._resizeObserver = null;
       this._barHitAreas = [];
       this._refreshTimer = null;
     }
@@ -272,13 +270,7 @@
       }
     }
 
-    connectedCallback() {
-      this._setupResizeObserver();
-    }
-
     disconnectedCallback() {
-      this._resizeObserver?.disconnect();
-      this._resizeObserver = null;
       if (this._refreshTimer) {
         clearInterval(this._refreshTimer);
         this._refreshTimer = null;
@@ -360,19 +352,6 @@
         if (e.touches.length) this._onMouseMove(e.touches[0]);
       }, { passive: true });
 
-      this._setupResizeObserver();
-    }
-
-    // ── Resize Observer ───────────────────────────────────────────────────────
-
-    _setupResizeObserver() {
-      const wrapper = this.shadowRoot?.getElementById('chart-wrapper');
-      if (!wrapper) return;
-      this._resizeObserver?.disconnect();
-      this._resizeObserver = new ResizeObserver(() => {
-        if (this._data) this._drawChart();
-      });
-      this._resizeObserver.observe(wrapper);
     }
 
     // ── Refresh timer ─────────────────────────────────────────────────────────
@@ -499,18 +478,17 @@
 
     _drawChart() {
       const canvas = this.shadowRoot?.getElementById('chart-canvas');
-      const wrapper = this.shadowRoot?.getElementById('chart-wrapper');
-      if (!canvas || !wrapper || !this._data) return;
+      if (!canvas || !this._data) return;
 
       const dpr = window.devicePixelRatio || 1;
-      const W = wrapper.clientWidth;
-      // Use fixed config height — never read wrapper.clientHeight, which would
-      // create a ResizeObserver feedback loop (canvas height → wrapper grows → observer fires → repeat).
-      const H = Math.max(this._config.chart_height - 4, 150); // -4 for bottom padding
+      // Width: read actual rendered width (CSS width:100% already applied).
+      // Height: fixed from config — never derived from layout, no feedback loop.
+      const W = Math.round(canvas.getBoundingClientRect().width) || canvas.parentElement.clientWidth || 300;
+      const H = Math.max(this._config.chart_height, 150);
 
       canvas.width  = W * dpr;
       canvas.height = H * dpr;
-      canvas.style.width  = W + 'px';
+      // Only set height in style; width is handled by CSS width:100%
       canvas.style.height = H + 'px';
 
       const ctx = canvas.getContext('2d');
@@ -716,8 +694,9 @@
 
     _showTooltip(e, hit) {
       const tooltip = this.shadowRoot?.getElementById('tooltip');
-      const wrapper = this.shadowRoot?.getElementById('chart-wrapper');
-      if (!tooltip || !wrapper) return;
+      const canvas  = this.shadowRoot?.getElementById('chart-canvas');
+      if (!tooltip || !canvas) return;
+      const wrapper = canvas.parentElement;
 
       let html = `<div class="tooltip-title">${this._escHtml(this._slotLabel(hit.slot))}</div>`;
 
