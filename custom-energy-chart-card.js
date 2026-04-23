@@ -42,6 +42,7 @@
   const CARD_STYLES = `
     :host {
       display: block;
+      height: 100%;
     }
     ha-card {
       overflow: hidden;
@@ -833,65 +834,14 @@
     .icon-btn.delete:hover { background: rgba(var(--rgb-error-color,219,68,55),0.1); color: var(--error-color,#db4437); }
     .icon-btn.disabled-btn { opacity: 0.3; pointer-events: none; }
     .entity-form {
-      padding: 12px;
+      padding: 8px 12px 12px;
       display: flex;
       flex-direction: column;
-      gap: 12px;
+      gap: 0;
       border-top: 1px solid var(--divider-color);
     }
     .entity-form.hidden { display: none; }
-    ha-entity-picker, ha-textfield { display: block; width: 100%; }
-    .field-row {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-    .field-row label {
-      font-size: 0.85em;
-      color: var(--secondary-text-color);
-      min-width: 68px;
-      flex-shrink: 0;
-    }
-    .color-preview {
-      width: 34px;
-      height: 34px;
-      border-radius: 50%;
-      border: 2px solid var(--divider-color);
-      flex-shrink: 0;
-      overflow: hidden;
-      padding: 0;
-      cursor: pointer;
-      position: relative;
-    }
-    .color-preview input[type=color] {
-      position: absolute;
-      inset: -4px;
-      width: calc(100% + 8px);
-      height: calc(100% + 8px);
-      opacity: 0;
-      cursor: pointer;
-    }
-    .color-text {
-      font-size: 0.82em;
-      font-family: monospace;
-      color: var(--secondary-text-color);
-    }
-    .native-select {
-      flex: 1;
-      padding: 8px 10px;
-      border: 1px solid var(--divider-color, rgba(0,0,0,0.2));
-      border-radius: 6px;
-      background: var(--card-background-color, #fff);
-      color: var(--primary-text-color);
-      font-family: inherit;
-      font-size: 0.88em;
-      cursor: pointer;
-      outline: none;
-    }
-    .native-select:focus {
-      border-color: var(--primary-color);
-      box-shadow: 0 0 0 1px var(--primary-color);
-    }
+    ha-entity-picker { display: block; width: 100%; }
     .add-btn {
       display: flex;
       align-items: center;
@@ -940,9 +890,10 @@
 
     set hass(hass) {
       this._hass = hass;
-      this.shadowRoot.querySelectorAll('ha-entity-picker').forEach(p => { p.hass = hass; });
-      const f = this.shadowRoot.getElementById('general-form');
-      if (f) f.hass = hass;
+      // Propagate hass to all HA components in the shadow DOM
+      this.shadowRoot.querySelectorAll('ha-entity-picker, ha-form').forEach(el => {
+        el.hass = hass;
+      });
     }
 
     _fire() {
@@ -953,7 +904,6 @@
       }));
     }
 
-    // Called once on first setConfig
     _renderFull() {
       this.shadowRoot.innerHTML = `
         <style>${EDITOR_STYLES}</style>
@@ -969,27 +919,23 @@
         </div>
       `;
 
-      // Wire up ha-form (properties must be set imperatively, not as HTML attributes)
       const form = this.shadowRoot.getElementById('general-form');
       form.hass   = this._hass;
       form.schema = [
-        { name: 'title',            selector: { text: {} } },
-        { name: 'unit',             selector: { text: {} } },
-        { name: 'period',           selector: { select: { options: [
+        { name: 'title',  selector: { text: {} } },
+        { name: 'unit',   selector: { text: {} } },
+        { name: 'period', selector: { select: { options: [
           { value: 'day',   label: 'Tag (st\u00fcndlich)'  },
           { value: 'week',  label: 'Woche (t\u00e4glich)'  },
           { value: 'month', label: 'Monat (t\u00e4glich)'  },
         ]}}},
-        { name: 'refresh_interval', selector: { number: { min: 60,  max: 3600, step: 60, mode: 'box' } } },
+        { name: 'refresh_interval', selector: { number: { min: 60, max: 3600, step: 60, mode: 'box' } } },
       ];
       form.computeLabel = s => ({
-        title:            'Titel',
-        unit:             'Einheit',
-        period:           'Standard-Zeitraum',
+        title: 'Titel', unit: 'Einheit', period: 'Standard-Zeitraum',
         refresh_interval: 'Aktualisierungsintervall (s)',
       }[s.name] || s.name);
       this._syncGeneralForm();
-
       form.addEventListener('value-changed', ev => {
         Object.assign(this._config, ev.detail.value);
         this._fire();
@@ -1022,63 +968,87 @@
       };
     }
 
-    // Re-renders only the entity list (general form stays intact)
     _renderEntityList() {
       const list = this.shadowRoot?.getElementById('entity-list');
       if (!list) return;
       const entities = this._config.entities;
 
-      list.innerHTML = entities.map((e, i) => this._entityHtml(e, i)).join('');
+      // Render static row shells (headers + empty form containers)
+      list.innerHTML = entities.map((e, i) => {
+        const exp   = this._expandedIdx === i;
+        const name  = this._esc(e.name || e.statistic_id || `Entit\u00e4t ${i + 1}`);
+        const color = e.color || DEFAULT_COLORS[i % DEFAULT_COLORS.length];
+        const n     = entities.length;
+        return `
+          <div class="entity-row">
+            <div class="entity-header" data-i="${i}">
+              <div class="color-dot" data-i="${i}" style="background:${color}"></div>
+              <span class="entity-label" data-i="${i}">${name}</span>
+              <div class="row-actions">
+                <button class="icon-btn up${i === 0   ? ' disabled-btn' : ''}" data-i="${i}" title="Nach oben"><ha-icon icon="mdi:chevron-up"></ha-icon></button>
+                <button class="icon-btn down${i===n-1 ? ' disabled-btn' : ''}" data-i="${i}" title="Nach unten"><ha-icon icon="mdi:chevron-down"></ha-icon></button>
+                <button class="icon-btn delete" data-i="${i}" title="Entfernen"><ha-icon icon="mdi:delete-outline"></ha-icon></button>
+              </div>
+            </div>
+            <div class="entity-form${exp ? '' : ' hidden'}" id="ef-${i}"></div>
+          </div>
+        `;
+      }).join('');
 
-      // ha-entity-picker needs hass set as a property
-      list.querySelectorAll('ha-entity-picker').forEach(picker => {
-        if (this._hass) picker.hass = this._hass;
-        const i = +picker.dataset.i;
-        picker.value = entities[i].statistic_id || '';
+      // Populate expanded entity form with native HA components (must be set via DOM API)
+      entities.forEach((e, i) => {
+        if (this._expandedIdx !== i) return;
+        const container = list.querySelector(`#ef-${i}`);
+        if (!container) return;
+
+        // ha-entity-picker
+        const picker = document.createElement('ha-entity-picker');
+        picker.hass = this._hass;
+        picker.label = 'Entit\u00e4t / Statistik-ID';
+        picker.value = e.statistic_id || '';
+        picker.setAttribute('include-statistics', '');
+        picker.setAttribute('allow-custom-entity', '');
         picker.addEventListener('value-changed', ev => {
           entities[i].statistic_id = ev.detail.value || '';
-          // Auto-fill name if field is still empty
           if (!entities[i].name && this._hass?.states[ev.detail.value]) {
             entities[i].name = this._hass.states[ev.detail.value].attributes.friendly_name || ev.detail.value;
-            const tf = list.querySelector(`ha-textfield[data-i="${i}"]`);
-            if (tf) tf.value = entities[i].name;
+            const ef = list.querySelector(`#ef-${i} ha-form`);
+            if (ef) ef.data = { ...ef.data, name: entities[i].name };
           }
+          this._updateDot(list, i, entities[i].color);
           this._fire();
         });
-      });
+        container.appendChild(picker);
 
-      // ha-textfield value must also be set as property
-      list.querySelectorAll('ha-textfield[data-i]').forEach(tf => {
-        const i = +tf.dataset.i;
-        tf.value = entities[i].name || '';
-        tf.addEventListener('change', ev => {
-          entities[i].name = ev.target.value;
+        // ha-form for name / color / stat_type — all native HA selectors
+        const form = document.createElement('ha-form');
+        form.hass   = this._hass;
+        form.schema = [
+          { name: 'name',      selector: { text: {} } },
+          { name: 'color',     selector: { color_rgb: {} } },
+          { name: 'stat_type', selector: { select: { options: [
+            { value: 'change', label: 'Wert\u00e4nderung (change) \u2013 Energiez\u00e4hler' },
+            { value: 'mean',   label: 'Mittelwert (mean) \u2013 Leistungssensor' },
+          ]}}},
+        ];
+        form.computeLabel = s => ({ name: 'Anzeigename', color: 'Farbe', stat_type: 'Statistik-Typ' }[s.name] || s.name);
+        form.data = {
+          name:      e.name      || '',
+          color:     this._hexToRgb(e.color || DEFAULT_COLORS[i % DEFAULT_COLORS.length]),
+          stat_type: e.stat_type || 'change',
+        };
+        form.addEventListener('value-changed', ev => {
+          const v = ev.detail.value;
+          entities[i].name      = v.name;
+          entities[i].color     = this._rgbToHex(v.color);
+          entities[i].stat_type = v.stat_type;
+          // Update color dot and header label live
+          this._updateDot(list, i, entities[i].color);
           const lbl = list.querySelector(`.entity-label[data-i="${i}"]`);
-          if (lbl) lbl.textContent = ev.target.value || entities[i].statistic_id || `Entit\u00e4t ${i + 1}`;
+          if (lbl) lbl.textContent = v.name || entities[i].statistic_id || `Entit\u00e4t ${i + 1}`;
           this._fire();
         });
-      });
-
-      // Color pickers
-      list.querySelectorAll('input[type=color]').forEach(inp => {
-        const i = +inp.dataset.i;
-        inp.addEventListener('input', ev => {
-          const c = ev.target.value;
-          entities[i].color = c;
-          list.querySelector(`.color-dot[data-i="${i}"]`).style.background    = c;
-          list.querySelector(`.color-preview[data-i="${i}"]`).style.background = c;
-          list.querySelector(`.color-text[data-i="${i}"]`).textContent         = c;
-          this._fire();
-        });
-      });
-
-      // Stat-type selects
-      list.querySelectorAll('select[data-i]').forEach(sel => {
-        const i = +sel.dataset.i;
-        sel.addEventListener('change', ev => {
-          entities[i].stat_type = ev.target.value;
-          this._fire();
-        });
+        container.appendChild(form);
       });
 
       // Header expand/collapse
@@ -1097,8 +1067,8 @@
           ev.stopPropagation();
           const i = +btn.dataset.i;
           entities.splice(i, 1);
-          if (this._expandedIdx === i)       this._expandedIdx = null;
-          else if (this._expandedIdx > i)    this._expandedIdx--;
+          if (this._expandedIdx === i)    this._expandedIdx = null;
+          else if (this._expandedIdx > i) this._expandedIdx--;
           this._renderEntityList();
           this._fire();
         });
@@ -1110,9 +1080,9 @@
           ev.stopPropagation();
           const i = +btn.dataset.i;
           if (i === 0) return;
-          [entities[i - 1], entities[i]] = [entities[i], entities[i - 1]];
-          if (this._expandedIdx === i)     this._expandedIdx = i - 1;
-          else if (this._expandedIdx === i - 1) this._expandedIdx = i;
+          [entities[i-1], entities[i]] = [entities[i], entities[i-1]];
+          if      (this._expandedIdx === i)   this._expandedIdx = i - 1;
+          else if (this._expandedIdx === i-1) this._expandedIdx = i;
           this._renderEntityList();
           this._fire();
         });
@@ -1124,53 +1094,30 @@
           ev.stopPropagation();
           const i = +btn.dataset.i;
           if (i >= entities.length - 1) return;
-          [entities[i], entities[i + 1]] = [entities[i + 1], entities[i]];
-          if (this._expandedIdx === i)     this._expandedIdx = i + 1;
-          else if (this._expandedIdx === i + 1) this._expandedIdx = i;
+          [entities[i], entities[i+1]] = [entities[i+1], entities[i]];
+          if      (this._expandedIdx === i)   this._expandedIdx = i + 1;
+          else if (this._expandedIdx === i+1) this._expandedIdx = i;
           this._renderEntityList();
           this._fire();
         });
       });
     }
 
-    _entityHtml(e, i) {
-      const n     = this._config.entities.length;
-      const exp   = this._expandedIdx === i;
-      const name  = this._esc(e.name || e.statistic_id || `Entit\u00e4t ${i + 1}`);
-      const color = e.color || DEFAULT_COLORS[i % DEFAULT_COLORS.length];
-      const stype = e.stat_type || 'change';
+    _updateDot(list, i, color) {
+      const dot = list.querySelector(`.color-dot[data-i="${i}"]`);
+      if (dot) dot.style.background = color;
+    }
 
-      return `
-        <div class="entity-row">
-          <div class="entity-header" data-i="${i}">
-            <div class="color-dot" data-i="${i}" style="background:${color}"></div>
-            <span class="entity-label" data-i="${i}">${name}</span>
-            <div class="row-actions">
-              <button class="icon-btn up${i === 0     ? ' disabled-btn' : ''}" data-i="${i}" title="Nach oben"><ha-icon icon="mdi:chevron-up"></ha-icon></button>
-              <button class="icon-btn down${i === n-1 ? ' disabled-btn' : ''}" data-i="${i}" title="Nach unten"><ha-icon icon="mdi:chevron-down"></ha-icon></button>
-              <button class="icon-btn delete" data-i="${i}" title="Entfernen"><ha-icon icon="mdi:delete-outline"></ha-icon></button>
-            </div>
-          </div>
-          <div class="entity-form${exp ? '' : ' hidden'}">
-            <ha-entity-picker data-i="${i}" label="Entit\u00e4t / Statistik-ID" include-statistics allow-custom-entity></ha-entity-picker>
-            <ha-textfield data-i="${i}" label="Anzeigename"></ha-textfield>
-            <div class="field-row">
-              <label>Farbe</label>
-              <div class="color-preview" data-i="${i}" style="background:${color}">
-                <input type="color" data-i="${i}" value="${color}">
-              </div>
-              <span class="color-text" data-i="${i}">${color}</span>
-            </div>
-            <div class="field-row">
-              <label>Statistik-Typ</label>
-              <select class="native-select" data-i="${i}">
-                <option value="change"${stype === 'change' ? ' selected' : ''}>Wert\u00e4nderung (change) \u2013 Energiez\u00e4hler</option>
-                <option value="mean"${stype === 'mean' ? ' selected' : ''}>Mittelwert (mean) \u2013 Leistungssensor</option>
-              </select>
-            </div>
-          </div>
-        </div>
-      `;
+    // Hex #rrggbb  →  [r, g, b]
+    _hexToRgb(hex) {
+      const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex || '');
+      return m ? [parseInt(m[1],16), parseInt(m[2],16), parseInt(m[3],16)] : [72,143,194];
+    }
+
+    // [r, g, b]  →  #rrggbb
+    _rgbToHex(rgb) {
+      if (!Array.isArray(rgb) || rgb.length < 3) return '#488fc2';
+      return '#' + rgb.map(v => Math.round(v).toString(16).padStart(2,'0')).join('');
     }
 
     _esc(s) {
